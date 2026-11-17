@@ -1,11 +1,14 @@
-// EMBERDEEP — enemies and bosses: spawning, movement AI and boss patterns.
+// EMBERDEEP v3 — enemies and bosses: spawning, movement AI, boss patterns.
 // One job: how every creature in the mountain behaves.
+// v3 adds the bomber (volatile cinder that blows up), the Obsidian Warden
+// boss on floor 4, and elite variants that hit harder and pay more.
 
 function ED_spawnEnemy(world, type, x, y) {
   const def = ED_ENEMIES[type];
   const floor = world.floor;
-  const hpScale = 1 + ED_ENEMY_SCALE.hpPerFloor * (floor - 1);
-  const spScale = 1 + ED_ENEMY_SCALE.speedPerFloor * (floor - 1);
+  const diff = ED_DIFFICULTIES[world.difficulty];
+  const hpScale = (1 + ED_ENEMY_SCALE.hpPerFloor * (floor - 1)) * diff.hpMul;
+  const spScale = (1 + ED_ENEMY_SCALE.speedPerFloor * (floor - 1)) * diff.speedMul;
   const e = {
     type, x, y,
     vx: 0, vy: 0,
@@ -15,22 +18,33 @@ function ED_spawnEnemy(world, type, x, y) {
     speed: def.speed * spScale,
     damage: def.damage,
     shards: def.shards,
-    score: def.score,
+    score: Math.round(def.score * diff.scoreMul),
     color: def.color, dark: def.dark,
     boss: !!def.boss,
+    elite: false,
     flash: 0, dead: false, orbitHit: 0,
-    t: world.rng.range(0, 6.28), // per-enemy phase for wobble / sine
+    t: world.rng.range(0, 6.28),
     shootTimer: world.rng.range(1.2, 2.4),
     slamTimer: 4, spawnTimer: 7, jetTimer: 0, jetAngle: 0,
+    fuseTimer: 0, teleportTimer: 6,
     enraged: false,
   };
   world.enemies.push(e);
   return e;
 }
 
+// Make an enemy elite: bigger, tougher, worth triple.
+function ED_makeElite(e) {
+  e.elite = true;
+  e.radius = Math.round(e.radius * 1.25);
+  e.maxHp *= 3;
+  e.hp = e.maxHp;
+  e.score *= 3;
+  e.shards += 3;
+}
+
 function ED_spawnBoss(world) {
-  const floorDef = ED_FLOORS[world.floor - 1];
-  const type = floorDef.boss;
+  const type = ED_bossForFloor(world, world.floor);
   const a = ED_CONFIG.arena;
   const boss = ED_spawnEnemy(world, type, a.x + a.w / 2, a.y + 150);
   world.boss = boss;
@@ -53,7 +67,8 @@ function ED_edgePoint(world, rng) {
 function ED_enemySeparation(e, world) {
   for (const o of world.enemies) {
     if (o === e || o.dead) continue;
-    const dx = e.x - o.x, dy = e.y - o.y;
+    const dx = e.x - o.x;
+    const dy = e.y - o.y;
     const d = Math.hypot(dx, dy);
     const min = e.radius + o.radius;
     if (d > 0 && d < min) {
@@ -64,11 +79,28 @@ function ED_enemySeparation(e, world) {
   }
 }
 
+// A bomber that dies blows up into a ring of ember globs.
+function ED_bomberBlast(world, e) {
+  world.events.push({ type: 'boom' });
+  ED_burst(world, e.x, e.y, 20, '#ffe14a', 260);
+  for (let k = 0; k < 5; k++) {
+    const ang = (k / 5) * Math.PI * 2 + e.t;
+    world.ebullets.push({
+      x: e.x, y: e.y,
+      vx: Math.cos(ang) * 150, vy: Math.sin(ang) * 150,
+      radius: 6, damage: 1, life: 2.4,
+    });
+  }
+  world.shake = Math.min(world.shake + 4, 14);
+}
+
 function ED_updateEnemy(world, e, dt) {
   const p = world.player;
-  const dx = p.x - e.x, dy = p.y - e.y;
+  const dx = p.x - e.x;
+  const dy = p.y - e.y;
   const dist = Math.hypot(dx, dy) || 1;
-  const nx = dx / dist, ny = dy / dist;
+  const nx = dx / dist;
+  const ny = dy / dist;
   e.t += dt;
   if (e.flash > 0) e.flash -= dt;
 
@@ -113,8 +145,29 @@ function ED_updateEnemy(world, e, dt) {
       e.vy = (nx * Math.sin(wob) + ny * Math.cos(wob)) * e.speed * slow;
       break;
     }
+    case 'bomber': {
+      // Volatile cinder: rushes the warden, flashes, then blows up.
+      e.vx = nx * e.speed * slow;
+      e.vy = ny * e.speed * slow;
+      if (dist < 90) {
+        e.fuseTimer += dt;
+        if (e.fuseTimer > 0.55) {
+          e.hp = 0;
+          ED_bomberBlast(world, e);
+          ED_killEnemy(world, e);
+          return;
+        }
+      } else {
+        e.fuseTimer = 0;
+      }
+      break;
+    }
     case 'colossus': {
       ED_updateColossus(world, e, dt, nx, ny, dist);
+      break;
+    }
+    case 'warden': {
+      ED_updateWarden(world, e, dt, nx, ny, dist);
       break;
     }
     case 'heart': {
@@ -163,6 +216,45 @@ function ED_updateColossus(world, e, dt, nx, ny, dist) {
       const pt = ED_edgePoint(world, world.rng);
       ED_spawnEnemy(world, 'mite', pt.x, pt.y);
     }
+  }
+}
+
+// Floor 4 boss: the Obsidian Warden. It teleports around the arena, fires
+// aimed three-spreads, and summons wisps. Under half health it hurries.
+function ED_updateWarden(world, e, dt, nx, ny, dist) {
+  const p = world.player;
+  e.vx = nx * e.speed * 0.5;
+  e.vy = ny * e.speed * 0.5;
+  const hurry = e.hp < e.maxHp / 2 ? 0.7 : 1;
+  e.shootTimer -= dt;
+  if (e.shootTimer <= 0 && dist < 640) {
+    e.shootTimer = 2.2 * hurry;
+    const baseA = Math.atan2(p.y - e.y, p.x - e.x);
+    for (let k = -1; k <= 1; k++) {
+      const ang = baseA + k * 0.22;
+      world.ebullets.push({
+        x: e.x, y: e.y,
+        vx: Math.cos(ang) * 240, vy: Math.sin(ang) * 240,
+        radius: 7, damage: 1, life: 3.4,
+      });
+    }
+    world.events.push({ type: 'spit' });
+  }
+  e.teleportTimer -= dt;
+  if (e.teleportTimer <= 0) {
+    e.teleportTimer = 6 * hurry;
+    const a = ED_CONFIG.arena;
+    ED_burst(world, e.x, e.y, 16, '#4ac8ff', 200);
+    e.x = world.rng.range(a.x + 80, a.x + a.w - 80);
+    e.y = world.rng.range(a.y + 80, a.y + a.h - 80);
+    ED_burst(world, e.x, e.y, 16, '#4ac8ff', 200);
+    world.events.push({ type: 'teleport' });
+  }
+  e.spawnTimer -= dt;
+  if (e.spawnTimer <= 0) {
+    e.spawnTimer = 9;
+    const pt = ED_edgePoint(world, world.rng);
+    ED_spawnEnemy(world, 'wisp', pt.x, pt.y);
   }
 }
 

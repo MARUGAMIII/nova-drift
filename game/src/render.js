@@ -1,12 +1,10 @@
-// EMBERDEEP — all drawing: the arena, the creatures, the particles, the HUD
-// and every screen. One job: turn the world state into a picture.
-
-function ED_floorColors(world) {
-  return ED_FLOORS[world.floor - 1];
-}
+// EMBERDEEP v3 — all drawing: the arena, the creatures, the particles, the
+// HUD and every screen. One job: turn the world state into a picture.
+// v3 adds the difficulty cards on the title screen, the bomber and the
+// Obsidian Warden, elite gold rings, and Endless depth labels.
 
 function ED_drawBackground(ctx, world) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   const a = ED_CONFIG.arena;
   ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
@@ -106,15 +104,17 @@ function ED_drawPickups(ctx, world) {
   ctx.globalAlpha = 1;
 }
 
+function ED_bossLabel(type) {
+  if (type === 'colossus') return 'CINDER COLOSSUS';
+  if (type === 'warden') return 'THE OBSIDIAN WARDEN';
+  return 'THE MAGMA HEART';
+}
+
 function ED_drawEnemy(ctx, world, e) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   ctx.save();
   ctx.translate(e.x, e.y);
-  if (e.flash > 0) {
-    ctx.fillStyle = '#ffffff';
-  } else {
-    ctx.fillStyle = e.color;
-  }
+  ctx.fillStyle = e.flash > 0 ? '#ffffff' : e.color;
   const wob = Math.sin(e.t * 6) * 0.08;
   ctx.rotate(wob);
 
@@ -125,32 +125,84 @@ function ED_drawEnemy(ctx, world, e) {
       const px = Math.cos(a) * e.radius, py = Math.sin(a) * e.radius;
       if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     }
-    ctx.closePath(); ctx.fill();
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = e.dark;
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.45, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.45, 0, Math.PI * 2);
+    ctx.fill();
   } else if (e.type === 'spitter') {
-    ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = e.dark;
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(4, -3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(4, -3, 3, 0, Math.PI * 2);
+    ctx.fill();
   } else if (e.type === 'splitter') {
-    ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = e.dark; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(-e.radius * 0.6, 0); ctx.lineTo(e.radius * 0.6, 0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, -e.radius * 0.6); ctx.lineTo(0, e.radius * 0.6); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = e.dark;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-e.radius * 0.6, 0);
+    ctx.lineTo(e.radius * 0.6, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -e.radius * 0.6);
+    ctx.lineTo(0, e.radius * 0.6);
+    ctx.stroke();
   } else if (e.type === 'wisp') {
     ctx.globalAlpha = 0.85;
-    ctx.beginPath(); ctx.arc(0, 0, e.radius + 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius + 4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
   } else if (e.type === 'golem') {
     ctx.fillRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
     ctx.fillStyle = e.dark;
     ctx.fillRect(-e.radius * 0.6, -e.radius * 0.6, e.radius * 1.2, e.radius * 1.2);
     ctx.fillStyle = c.glow;
-    ctx.beginPath(); ctx.arc(-6, -4, 3, 0, Math.PI * 2); ctx.arc(6, -4, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-6, -4, 3, 0, Math.PI * 2);
+    ctx.arc(6, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (e.type === 'bomber') {
+    // Volatile cinder: spiky ball with a sparking fuse, flashing as it arms.
+    const armed = e.fuseTimer > 0;
+    ctx.fillStyle = armed && Math.floor(world.time * 16) % 2 === 0 ? '#ffffff' : e.color;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const r = i % 2 === 0 ? e.radius + 4 : e.radius - 2;
+      const px = Math.cos(a) * r, py = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = e.dark;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#8a5a2b';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -e.radius);
+    ctx.quadraticCurveTo(6, -e.radius - 8, 10, -e.radius - 6);
+    ctx.stroke();
+    ctx.fillStyle = '#ffd94a';
+    ctx.beginPath();
+    ctx.arc(10, -e.radius - 6, 3 + Math.sin(world.time * 20) * 1.2, 0, Math.PI * 2);
+    ctx.fill();
   } else if (e.type === 'colossus') {
     // Crystal golem: big faceted body, glowing core, crown spikes.
     ctx.beginPath();
@@ -159,12 +211,18 @@ function ED_drawEnemy(ctx, world, e) {
       const px = Math.cos(a) * e.radius, py = Math.sin(a) * e.radius;
       if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     }
-    ctx.closePath(); ctx.fill();
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = e.dark;
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.28, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = e.color; ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = e.color;
+    ctx.lineWidth = 4;
     for (let i = 0; i < 5; i++) {
       const a = -Math.PI / 2 + (i - 2) * 0.4;
       ctx.beginPath();
@@ -175,8 +233,42 @@ function ED_drawEnemy(ctx, world, e) {
     if (e.slamming > 0) {
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(0, 0, e.radius + 14, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius + 14, 0, Math.PI * 2);
+      ctx.stroke();
     }
+  } else if (e.type === 'warden') {
+    // The Obsidian Warden: tall black-glass figure, cold blue core, crown.
+    ctx.fillStyle = e.dark;
+    ctx.beginPath();
+    ctx.moveTo(0, -e.radius - 10);
+    ctx.lineTo(e.radius * 0.7, e.radius * 0.8);
+    ctx.lineTo(-e.radius * 0.7, e.radius * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = e.color;
+    ctx.beginPath();
+    ctx.arc(0, -e.radius * 0.15, e.radius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(0, -e.radius * 0.15, e.radius * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#a8e4ff';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + (i - 1) * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * e.radius * 0.6, -e.radius * 0.5 + Math.sin(a) * e.radius * 0.3);
+      ctx.lineTo(Math.cos(a) * (e.radius + 12), -e.radius * 0.5 + Math.sin(a) * (e.radius + 12) * 0.3);
+      ctx.stroke();
+    }
+    // Cold aura ring.
+    ctx.strokeStyle = 'rgba(106,216,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius + 12 + Math.sin(world.time * 3) * 3, 0, Math.PI * 2);
+    ctx.stroke();
   } else if (e.type === 'heart') {
     // The Magma Heart: pulsing core with flame petals.
     const pulse = 1 + Math.sin(world.time * 3) * 0.06;
@@ -189,27 +281,42 @@ function ED_drawEnemy(ctx, world, e) {
       ctx.fill();
     }
     ctx.fillStyle = e.color;
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.72, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.72, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffd94a';
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.18, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, 0, e.radius * 0.18, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 
+  // Elites wear a gold ring so they read as worth hunting.
+  if (e.elite) {
+    ctx.strokeStyle = '#ffd94a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.radius + 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   // Health bar for tough enemies and bosses.
-  if ((e.boss || e.type === 'golem') && e.hp < e.maxHp) {
+  if ((e.boss || e.type === 'golem' || e.elite) && e.hp < e.maxHp) {
     const w = e.radius * 2;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(e.x - w / 2, e.y - e.radius - 14, w, 5);
-    ctx.fillStyle = e.boss ? '#ff5a2e' : '#ffd94a';
+    ctx.fillStyle = e.boss ? '#ff5a2e' : (e.elite ? '#ffd94a' : '#ffd94a');
     ctx.fillRect(e.x - w / 2, e.y - e.radius - 14, w * (e.hp / e.maxHp), 5);
   }
 }
 
 function ED_drawPlayer(ctx, world) {
   const p = world.player;
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   ctx.save();
   ctx.translate(p.x, p.y);
 
@@ -217,7 +324,9 @@ function ED_drawPlayer(ctx, world) {
   if (p.dashTimer > 0) {
     ctx.globalAlpha = 0.4;
     ctx.fillStyle = c.ember;
-    ctx.beginPath(); ctx.arc(-p.dashDirX * 26, -p.dashDirY * 26, p.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-p.dashDirX * 26, -p.dashDirY * 26, p.radius, 0, Math.PI * 2);
+    ctx.fill();
     ctx.globalAlpha = 1;
   }
 
@@ -226,7 +335,9 @@ function ED_drawPlayer(ctx, world) {
     ctx.strokeStyle = c.glow;
     ctx.globalAlpha = 0.25;
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, 0, 130, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 130, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
@@ -235,9 +346,13 @@ function ED_drawPlayer(ctx, world) {
     for (let i = 0; i < p.orbits; i++) {
       const ang = p.orbitAngle + (i / p.orbits) * Math.PI * 2;
       ctx.fillStyle = '#ffb35c';
-      ctx.beginPath(); ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 7, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = '#fff3c4';
-      ctx.beginPath(); ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -247,26 +362,41 @@ function ED_drawPlayer(ctx, world) {
   // The warden: hooded figure with a glowing staff, rotated toward the aim.
   ctx.rotate(p.aim);
   ctx.fillStyle = '#3a2a1a';
-  ctx.beginPath(); ctx.arc(0, 0, p.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = '#ff9a3c';
-  ctx.beginPath(); ctx.arc(0, 0, p.radius - 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, 0, p.radius - 4, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = '#2a130c';
-  ctx.beginPath(); ctx.arc(-2, 0, p.radius - 8, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-2, 0, p.radius - 8, 0, Math.PI * 2);
+  ctx.fill();
   // Staff pointing at the aim.
   ctx.strokeStyle = '#8a5a2b';
   ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(6, 6); ctx.lineTo(26, -2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(6, 6);
+  ctx.lineTo(26, -2);
+  ctx.stroke();
   ctx.fillStyle = '#ffd94a';
-  ctx.beginPath(); ctx.arc(28, -2, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(28, -2, 6, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = '#fff3c4';
-  ctx.beginPath(); ctx.arc(28, -2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(28, -2, 3, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 
   // Bright ring so the warden always reads as the player, never as a foe.
   ctx.strokeStyle = '#ffffff';
   ctx.globalAlpha = 0.85;
   ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.globalAlpha = 1;
 
   // Shield ring.
@@ -274,7 +404,9 @@ function ED_drawPlayer(ctx, world) {
     ctx.strokeStyle = '#59d8ff';
     ctx.lineWidth = 3;
     ctx.globalAlpha = 0.8;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius + 8, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
@@ -283,13 +415,16 @@ function ED_drawPlayer(ctx, world) {
     const frac = 1 - p.dashCd / ED_playerDashCooldown(p);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 14, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius + 14, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.stroke();
   }
 }
 
 function ED_drawHud(ctx, world) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   const p = world.player;
+  const diff = ED_DIFFICULTIES[world.difficulty];
   ctx.textBaseline = 'alphabetic';
 
   // Top bar.
@@ -316,12 +451,18 @@ function ED_drawHud(ctx, world) {
   ctx.fillStyle = c.text;
   ctx.font = 'bold 26px sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(c.name.toUpperCase(), 56, 84);
-  const nameW = ctx.measureText(c.name.toUpperCase()).width;
+  const floorName = ED_floorLabel(world).toUpperCase();
+  ctx.fillText(floorName, 56, 84);
+  const nameW = ctx.measureText(floorName).width;
   ctx.font = '16px sans-serif';
   ctx.fillStyle = c.accent;
   const waveLabel = world.boss ? 'BOSS' : (world.waveState === 'done' ? 'FLOOR CLEAR' : 'Wave ' + Math.max(1, world.wave) + ' / ' + ED_CONFIG.wavesPerFloor);
   ctx.fillText(waveLabel, 56 + nameW + 24, 84);
+
+  // Difficulty tag under the hearts.
+  ctx.fillStyle = '#9fb8d8';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillText(diff.label + (world.floor > ED_CONFIG.floors ? '  •  DEPTH ' + (world.floor - ED_CONFIG.floors) : ''), 56, 18);
 
   // Score and shards, right side.
   ctx.textAlign = 'right';
@@ -330,7 +471,10 @@ function ED_drawHud(ctx, world) {
   ctx.fillText('SCORE ' + world.score, 1224, 44);
   ctx.fillStyle = c.text;
   ctx.font = '16px sans-serif';
-  ctx.fillText('◆ ' + world.shards + ' shards   •   Floor ' + world.floor + ' / ' + ED_CONFIG.floors, 1224, 72);
+  const floorCount = world.floor > ED_CONFIG.floors
+    ? 'Depth ' + (world.floor - ED_CONFIG.floors)
+    : 'Floor ' + world.floor + ' / ' + ED_CONFIG.floors;
+  ctx.fillText('◆ ' + world.shards + ' shards   •   ' + floorCount, 1224, 72);
 
   // Relics owned, as a row of small badges.
   const ids = Object.keys(p.relics);
@@ -341,7 +485,9 @@ function ED_drawHud(ctx, world) {
     const relic = ED_RELICS.find((r) => r.id === id);
     if (!relic) continue;
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.beginPath(); ctx.arc(rx, 40, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(rx, 40, 13, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffd94a';
     ctx.textAlign = 'center';
     ctx.fillText(relic.name[0], rx, 45);
@@ -360,7 +506,7 @@ function ED_drawHud(ctx, world) {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(b.type === 'colossus' ? 'CINDER COLOSSUS' : 'THE MAGMA HEART', 640, 76);
+    ctx.fillText(ED_bossLabel(b.type), 640, 76);
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(640 - bw / 2, 82, bw, 12);
@@ -379,84 +525,122 @@ function ED_drawHud(ctx, world) {
   }
 }
 
-function ED_centerPanel(ctx, w, h, color) {
-  ctx.fillStyle = 'rgba(8,4,2,0.72)';
-  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
-  ctx.fillStyle = color;
-  ctx.fillRect(640 - w / 2, 400 - h / 2, w, h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(640 - w / 2, 400 - h / 2, w, h);
-}
-
 function ED_drawTitle(ctx, world) {
-  const c = ED_floorColors(world);
   ctx.fillStyle = '#160d08';
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+
+  // Mountain silhouette along the bottom, lava glowing in the cracks.
+  ctx.fillStyle = '#0d0705';
+  ctx.beginPath();
+  ctx.moveTo(0, 800);
+  ctx.lineTo(0, 690);
+  ctx.lineTo(180, 560);
+  ctx.lineTo(330, 700);
+  ctx.lineTo(520, 520);
+  ctx.lineTo(640, 600);
+  ctx.lineTo(760, 500);
+  ctx.lineTo(950, 690);
+  ctx.lineTo(1120, 580);
+  ctx.lineTo(1280, 700);
+  ctx.lineTo(1280, 800);
+  ctx.closePath();
+  ctx.fill();
   // Drifting embers behind the title.
   for (let i = 0; i < 70; i++) {
     const x = (i * 173 + world.time * (20 + (i % 5) * 9)) % 1280;
     const y = 800 - ((i * 269 + world.time * (12 + (i % 3) * 7)) % 820);
     ctx.fillStyle = i % 3 === 0 ? '#ffb35c' : '#ff6a3c';
     ctx.globalAlpha = 0.25 + (i % 4) * 0.15;
-    ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x, y, 2 + (i % 3), 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ff9a3c';
-  ctx.font = 'bold 92px sans-serif';
-  ctx.fillText('EMBERDEEP', 640, 250);
+  ctx.font = 'bold 88px sans-serif';
+  ctx.fillText('EMBERDEEP', 640, 180);
   ctx.fillStyle = '#f5d9b0';
   ctx.font = '22px sans-serif';
-  ctx.fillText('Delve of the Living Mountain', 640, 292);
-  ctx.fillStyle = c.accent;
+  ctx.fillText('Delve of the Living Mountain', 640, 220);
+  ctx.fillStyle = '#e07830';
   ctx.font = '17px sans-serif';
-  ctx.fillText('Five floors. Two bosses. One heart to kill.', 640, 326);
+  ctx.fillText('Five floors. Three bosses. Seventeen relics. Endless below.', 640, 252);
+
+  // Difficulty cards: click one, or press 1 / 2 / 3.
+  const cards = [
+    { key: 'normal', num: '1' },
+    { key: 'hard', num: '2' },
+    { key: 'endless', num: '3' },
+  ];
+  const cw = 300, ch = 138, gap = 36;
+  const x0 = 640 - (cw * 3 + gap * 2) / 2;
+  const cy = 300;
+  world.titleRects = [];
+  cards.forEach((card, i) => {
+    const d = ED_DIFFICULTIES[card.key];
+    const x = x0 + i * (cw + gap);
+    world.titleRects.push({ x, y: cy, w: cw, h: ch, diff: card.key });
+    ctx.fillStyle = '#241a14';
+    ctx.fillRect(x, cy, cw, ch);
+    ctx.strokeStyle = card.key === 'endless' ? '#ffd94a' : '#e07830';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, cy, cw, ch);
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText(d.label, x + cw / 2, cy + 44);
+    ctx.fillStyle = '#f5d9b0';
+    ctx.font = '15px sans-serif';
+    ctx.fillText(d.tag, x + cw / 2, cy + 76);
+    ctx.fillStyle = '#9fb8d8';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Press ' + card.num + ' or click', x + cw / 2, cy + 106);
+  });
 
   ctx.fillStyle = '#e8d9c0';
-  ctx.font = '18px sans-serif';
+  ctx.font = '17px sans-serif';
   const lines = [
     'WASD / arrows — move      Mouse — aim      Click / Space — fire embers',
     'Shift / right-click — dash through danger      1 / 2 / 3 — pick a relic',
     'Clear every wave, walk into the gate, choose a relic, descend deeper.',
     'P — pause      M — mute      R — delve again',
   ];
-  lines.forEach((line, i) => ctx.fillText(line, 640, 420 + i * 30));
+  lines.forEach((line, i) => ctx.fillText(line, 640, 500 + i * 28));
 
   ctx.fillStyle = '#ffd94a';
-  ctx.font = 'bold 24px sans-serif';
-  const blink = Math.sin(world.time * 3) > -0.2;
-  if (blink) ctx.fillText('— click or press Enter to descend —', 640, 580);
+  ctx.font = 'bold 22px sans-serif';
+  if (Math.sin(world.time * 3) > -0.2) ctx.fillText('— pick a way down —', 640, 650);
   if (world.best > 0) {
     ctx.fillStyle = '#9fb8d8';
     ctx.font = '16px sans-serif';
-    ctx.fillText('Best score: ' + world.best, 640, 622);
+    ctx.fillText('Best score: ' + world.best, 640, 690);
   }
   ctx.textAlign = 'left';
 }
 
 function ED_drawCard(ctx, world) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
+  const bossType = ED_bossForFloor(world, world.floor);
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
   ctx.textAlign = 'center';
   ctx.fillStyle = c.glow;
   ctx.font = 'bold 64px sans-serif';
-  ctx.fillText(c.name.toUpperCase(), 640, 380);
+  ctx.fillText(ED_floorLabel(world).toUpperCase(), 640, 380);
   ctx.fillStyle = c.text;
   ctx.font = '22px sans-serif';
-  ctx.fillText(c.sub, 640, 424);
-  if (c.boss) {
+  ctx.fillText(world.floor <= ED_FLOORS.length ? c.sub : 'The mountain reforms — deeper, hotter, hungrier', 640, 424);
+  if (bossType) {
     ctx.fillStyle = '#ff5a2e';
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('⚠ BOSS FLOOR ⚠', 640, 466);
+    ctx.fillText('⚠ BOSS FLOOR — ' + ED_bossLabel(bossType) + ' ⚠', 640, 466);
   }
   ctx.textAlign = 'left';
 }
 
 function ED_drawDraft(ctx, world) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   ctx.fillStyle = 'rgba(8,4,2,0.82)';
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
   ctx.textAlign = 'center';
@@ -510,7 +694,7 @@ function ED_drawPaused(ctx, world) {
 }
 
 function ED_drawEnd(ctx, world, won) {
-  const c = ED_floorColors(world);
+  const c = ED_floorDef(world);
   ctx.fillStyle = won ? 'rgba(20,12,2,0.78)' : 'rgba(10,2,2,0.78)';
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
   ctx.textAlign = 'center';
@@ -528,17 +712,19 @@ function ED_drawEnd(ctx, world, won) {
   const secs = Math.floor(world.runTime % 60);
   ctx.fillStyle = '#e8d9c0';
   ctx.font = '20px sans-serif';
+  const depthLine = world.floor > ED_CONFIG.floors
+    ? 'Depths reached: ' + (world.floor - ED_CONFIG.floors) + ' past the Heart'
+    : 'Floors reached: ' + world.floor + ' / 5';
   const stats = [
     'Score: ' + world.score + (world.newBest ? '  —  NEW BEST!' : '   (best ' + world.best + ')'),
-    'Floors reached: ' + world.floor + ' / 5      Kills: ' + world.kills,
+    depthLine + '      Kills: ' + world.kills,
     'Accuracy: ' + acc + '%      Time: ' + mins + ':' + String(secs).padStart(2, '0'),
   ];
   stats.forEach((line, i) => ctx.fillText(line, 640, 420 + i * 34));
 
   ctx.fillStyle = '#ffd94a';
   ctx.font = 'bold 24px sans-serif';
-  const blink = Math.sin(world.time * 3) > -0.2;
-  if (blink) ctx.fillText('— press R or click to delve again —', 640, 580);
+  if (Math.sin(world.time * 3) > -0.2) ctx.fillText('— press R or click to delve again —', 640, 580);
   ctx.textAlign = 'left';
 }
 
@@ -557,33 +743,45 @@ function ED_draw(ctx, world) {
     ED_drawPickups(ctx, world);
     // Shockwave rings under everything else.
     for (const r of world.rings) {
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = r.friendly ? '#ffb35c' : '#ffffff';
       ctx.globalAlpha = Math.max(0, 1 - r.r / r.maxR);
       ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
     for (const e of world.enemies) ED_drawEnemy(ctx, world, e);
     // Player bolts.
     for (const b of world.bullets) {
       ctx.fillStyle = b.crit ? '#ffd94a' : '#ffb35c';
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius + 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius + 1.5, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = '#fff3c4';
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     // Enemy globs.
     for (const b of world.ebullets) {
       ctx.fillStyle = '#ff4d6a';
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = '#ff8aa0';
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     if (world.screen !== 'over' && world.screen !== 'win') ED_drawPlayer(ctx, world);
     // Particles.
     for (const pt of world.particles) {
       ctx.globalAlpha = Math.max(0, pt.life / pt.maxLife);
       ctx.fillStyle = pt.color;
-      ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
     // Floating text.
@@ -605,6 +803,12 @@ function ED_draw(ctx, world) {
     else if (world.screen === 'win') ED_drawEnd(ctx, world, true);
   }
   ctx.restore();
+
+  // White flash on floor transitions.
+  if (world.flashWhite > 0) {
+    ctx.fillStyle = 'rgba(255,240,200,' + Math.min(0.35, world.flashWhite) + ')';
+    ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  }
 
   // Red hurt flash over everything.
   if (world.flashRed > 0) {

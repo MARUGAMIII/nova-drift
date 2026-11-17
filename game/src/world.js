@@ -1,11 +1,13 @@
-// EMBERDEEP — the run: floors, waves, collisions, pickups, particles and
-// the descent gate. One job: the simulation and its rules.
+// EMBERDEEP v3 — the run: floors, waves, collisions, pickups, particles,
+// the descent gate, and the Endless depths. One job: the simulation and
+// its rules.
 
 function ED_newRun(seed) {
   const rng = ED_Rng(seed);
   return {
     seed, rng,
     screen: 'title', // title | card | playing | draft | paused | over | win
+    difficulty: 'normal',
     floor: 1,
     wave: 0,
     waveState: 'idle', // idle | fighting | clearing | done
@@ -31,9 +33,11 @@ function ED_newRun(seed) {
     runTime: 0,
     shake: 0,
     flashRed: 0,
+    flashWhite: 0,
     cardTimer: 0,
     draft: [],
     draftRects: [],
+    titleRects: [],
     best: 0,
     newBest: false,
     events: [],
@@ -54,6 +58,28 @@ function ED_saveBest(world) {
   } catch (e) {}
 }
 
+// The floor definition for an absolute floor number. Past floor 5 the
+// Endless depths cycle the five palettes again, hotter each time round.
+function ED_floorDef(world) {
+  return ED_FLOORS[(world.floor - 1) % ED_FLOORS.length];
+}
+
+// Which boss, if any, guards this absolute floor number.
+function ED_bossForFloor(world, floor) {
+  if (floor <= ED_FLOORS.length) return ED_FLOORS[floor - 1].boss || null;
+  if (!ED_DIFFICULTIES[world.difficulty].endless) return null;
+  // Endless boss floors: every third depth past the Heart.
+  const past = floor - ED_FLOORS.length;
+  if (past % 3 !== 0) return null;
+  return ED_ENDLESS_BOSSES[(Math.floor(past / 3) - 1) % ED_ENDLESS_BOSSES.length];
+}
+
+// Display name for the HUD: plain floors by name, Endless by depth.
+function ED_floorLabel(world) {
+  if (world.floor <= ED_FLOORS.length) return ED_floorDef(world).name;
+  return 'Endless Depth ' + (world.floor - ED_FLOORS.length);
+}
+
 // Scatter floor decoration (rocks and crystal shards) for this floor.
 function ED_makeDecor(world) {
   const a = ED_CONFIG.arena;
@@ -71,6 +97,7 @@ function ED_makeDecor(world) {
 }
 
 function ED_startRun(world) {
+  const diff = ED_DIFFICULTIES[world.difficulty];
   world.screen = 'card';
   world.cardTimer = 2.2;
   world.floor = 1;
@@ -82,6 +109,8 @@ function ED_startRun(world) {
   world.runTime = 0;
   world.newBest = false;
   world.player = ED_newPlayer();
+  world.player.hearts = diff.hearts;
+  world.player.maxHearts = diff.hearts;
   world.enemies = [];
   world.bullets = [];
   world.ebullets = [];
@@ -95,7 +124,6 @@ function ED_startRun(world) {
 }
 
 function ED_startFloor(world) {
-  const def = ED_FLOORS[world.floor - 1];
   world.wave = 0;
   world.waveState = 'idle';
   world.waveTimer = 1.2;
@@ -111,13 +139,14 @@ function ED_startFloor(world) {
   world.player.invuln = 1.2;
   if (world.player.ward) world.player.shield = true;
   ED_makeDecor(world);
-  if (def.boss) world.events.push({ type: 'floorboss' });
+  world.flashWhite = 0.35;
+  if (ED_bossForFloor(world, world.floor)) world.events.push({ type: 'floorboss' });
 }
 
 function ED_spawnWave(world) {
   world.wave += 1;
-  const def = ED_FLOORS[world.floor - 1];
-  if (def.boss && world.wave > ED_CONFIG.wavesPerFloor) {
+  const bossType = ED_bossForFloor(world, world.floor);
+  if (bossType && world.wave > ED_CONFIG.wavesPerFloor) {
     // The boss wave: the boss plus a small escort.
     ED_spawnBoss(world);
     for (let i = 0; i < 2; i++) {
@@ -131,13 +160,25 @@ function ED_spawnWave(world) {
   world.spawnQueue = size;
   world.spawnTimer = 0;
   world.waveState = 'fighting';
+  // Wave 3 of a floor past the first (and every wave in the Endless
+  // depths) hides an elite: bigger, tougher, worth triple.
+  const endless = ED_DIFFICULTIES[world.difficulty].endless && world.floor > ED_FLOORS.length;
+  if ((world.wave === ED_CONFIG.wavesPerFloor && world.floor > 1) || endless) {
+    world.spawnQueue += 1;
+    world.eliteQueued = true;
+  }
 }
 
 function ED_spawnOne(world) {
-  const def = ED_FLOORS[world.floor - 1];
+  const def = ED_floorDef(world);
   const pt = ED_edgePoint(world, world.rng);
   const type = world.rng.pick(def.mix);
-  ED_spawnEnemy(world, type, pt.x, pt.y);
+  const e = ED_spawnEnemy(world, type, pt.x, pt.y);
+  if (world.eliteQueued) {
+    world.eliteQueued = false;
+    ED_makeElite(e);
+  }
+  return e;
 }
 
 function ED_burst(world, x, y, n, color, speed) {
@@ -159,7 +200,8 @@ function ED_addText(world, x, y, text, color) {
 }
 
 function ED_dropShards(world, e) {
-  for (let i = 0; i < e.shards; i++) {
+  const bonus = world.player.greed || 0;
+  for (let i = 0; i < e.shards + bonus; i++) {
     world.pickups.push({
       kind: 'shard',
       x: e.x + world.rng.range(-14, 14),
@@ -169,7 +211,7 @@ function ED_dropShards(world, e) {
       life: 10, r: 6,
     });
   }
-  // Hearts are rare: leech relic raises the chance.
+  // Hearts are rare: the leech relic raises the chance.
   const p = world.player;
   if (world.rng.next() < 0.03 + p.leech && p.hearts < p.maxHearts) {
     world.pickups.push({
@@ -197,10 +239,15 @@ function ED_killEnemy(world, e) {
   ED_dropShards(world, e);
   ED_addText(world, e.x, e.y - e.radius - 6, '+' + e.score, '#ffd94a');
   world.shake = Math.min(world.shake + (e.boss ? 12 : 2.5), 14);
+  if (e.type === 'bomber' && !e.blasted) {
+    e.blasted = true;
+    ED_bomberBlast(world, e);
+  }
   if (e.type === 'splitter') {
     for (let i = 0; i < 2; i++) {
       const m = ED_spawnEnemy(world, 'mite', e.x + (i === 0 ? -14 : 14), e.y);
-      m.hp = 1; m.maxHp = 1;
+      m.hp = 1;
+      m.maxHp = 1;
     }
   }
   if (e.boss) {
@@ -246,10 +293,17 @@ function ED_openGate(world) {
 }
 
 function ED_descend(world) {
-  if (world.floor >= ED_CONFIG.floors) {
-    // Should not happen: the Heart's death wins the run.
-    return;
-  }
+  const endless = ED_DIFFICULTIES[world.difficulty].endless;
+  if (world.floor >= ED_CONFIG.floors && !endless) return; // the Heart's death wins the run
+  world.floor += 1;
+  world.draft = ED_draftRelics(world.rng, world.player.relics);
+  world.screen = 'draft';
+  ED_Sound.relic();
+}
+
+// Endless: a boss falls, the mountain reforms one floor deeper.
+function ED_endlessNext(world) {
+  world.score += ED_CONFIG.floorClearBonus * world.floor;
   world.floor += 1;
   world.draft = ED_draftRelics(world.rng, world.player.relics);
   world.screen = 'draft';
@@ -321,7 +375,8 @@ function ED_updatePlaying(world, input, dt) {
         if (b.crit) ED_addText(world, b.x, b.y - 10, 'CRIT ' + Math.round(b.damage), '#ffd94a');
         // Chain lightning arcs to one nearby foe.
         if (p.chain > 0 && wasAlive) {
-          let best = null, bestD = 170;
+          let best = null;
+          let bestD = 170;
           for (const o of world.enemies) {
             if (o === e || o.dead) continue;
             const od = Math.hypot(o.x - e.x, o.y - e.y);
@@ -350,13 +405,15 @@ function ED_updatePlaying(world, input, dt) {
   }
   world.ebullets = world.ebullets.filter((b) => b.life > 0);
 
-  // Shockwave rings.
+  // Shockwave rings (friendly nova rings only glow, they never hurt).
   for (const r of world.rings) {
     r.r += r.speed * dt;
-    const d = Math.hypot(p.x - r.x, p.y - r.y);
-    if (Math.abs(d - r.r) < p.radius + 8 && !r.hit) {
-      r.hit = true;
-      ED_hurtPlayer(world, r.damage);
+    if (!r.friendly) {
+      const d = Math.hypot(p.x - r.x, p.y - r.y);
+      if (Math.abs(d - r.r) < p.radius + 8 && !r.hit) {
+        r.hit = true;
+        ED_hurtPlayer(world, r.damage);
+      }
     }
   }
   world.rings = world.rings.filter((r) => r.r < r.maxR);
@@ -369,7 +426,8 @@ function ED_updatePlaying(world, input, dt) {
       ED_hurtPlayer(world, e.damage);
       if (p.thorns > 0) ED_damageEnemy(world, e, p.thorns, e.x, e.y);
       // Push the enemy off so it does not sit on the player.
-      const nx = (e.x - p.x) / (d || 1), ny = (e.y - p.y) / (d || 1);
+      const nx = (e.x - p.x) / (d || 1);
+      const ny = (e.y - p.y) / (d || 1);
       e.x = p.x + nx * (p.radius + e.radius + 2);
       e.y = p.y + ny * (p.radius + e.radius + 2);
     }
@@ -382,7 +440,8 @@ function ED_updatePlaying(world, input, dt) {
     pk.life -= dt;
     pk.x += pk.vx * dt;
     pk.y += pk.vy * dt;
-    pk.vx *= 0.98; pk.vy *= 0.98;
+    pk.vx *= 0.98;
+    pk.vy *= 0.98;
     const d = Math.hypot(p.x - pk.x, p.y - pk.y);
     if (d < magnetR) {
       const pull = 420 * dt;
@@ -407,7 +466,8 @@ function ED_updatePlaying(world, input, dt) {
   for (const pt of world.particles) {
     pt.x += pt.vx * dt;
     pt.y += pt.vy * dt;
-    pt.vx *= 0.96; pt.vy *= 0.96;
+    pt.vx *= 0.96;
+    pt.vy *= 0.96;
     pt.life -= dt;
   }
   world.particles = world.particles.filter((pt) => pt.life > 0);
@@ -416,10 +476,12 @@ function ED_updatePlaying(world, input, dt) {
 
   // Wave cleared?
   if (world.waveState === 'fighting' && world.spawnQueue === 0 && world.enemies.length === 0 && world.screen === 'playing') {
-    const def = ED_FLOORS[world.floor - 1];
-    if (def.boss && world.wave > ED_CONFIG.wavesPerFloor) {
-      ED_winRun(world);
-    } else if (world.wave >= ED_CONFIG.wavesPerFloor && !def.boss) {
+    const bossType = ED_bossForFloor(world, world.floor);
+    const bossWave = bossType && world.wave > ED_CONFIG.wavesPerFloor;
+    if (bossWave) {
+      if (ED_DIFFICULTIES[world.difficulty].endless) ED_endlessNext(world);
+      else ED_winRun(world);
+    } else if (world.wave >= ED_CONFIG.wavesPerFloor && !bossType) {
       ED_openGate(world);
     } else {
       world.waveState = 'idle';
@@ -439,6 +501,7 @@ function ED_updatePlaying(world, input, dt) {
 
   if (world.shake > 0) world.shake = Math.max(0, world.shake - dt * 26);
   if (world.flashRed > 0) world.flashRed -= dt;
+  if (world.flashWhite > 0) world.flashWhite -= dt;
 }
 
 function ED_updateWorld(world, input, dt) {

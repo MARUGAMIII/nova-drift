@@ -1,4 +1,4 @@
-// EMBERDEEP — entry point: canvas, frame loop, screens and shortcuts.
+// EMBERDEEP v3 — entry point: canvas, frame loop, screens and shortcuts.
 // One job: own the loop and the wiring; the world module owns the rules,
 // render.js owns the drawing, and sounds play here from the events the
 // update returns.
@@ -32,8 +32,9 @@ function ED_updateStatus() {
     'floor ' + w.floor,
     'wave ' + Math.max(1, w.wave),
     w.player.hearts + ' hearts',
+    ED_DIFFICULTIES[w.difficulty].label,
   ];
-  if (w.screen === 'title') parts.push('press Enter to descend');
+  if (w.screen === 'title') parts.push('pick a difficulty: 1, 2 or 3');
   if (w.screen === 'over' || w.screen === 'win') parts.push('press R to delve again');
   const next = parts.join(', ');
   if (next !== ED_lastStatus) {
@@ -59,6 +60,9 @@ function ED_playEvent(event) {
     case 'slam': ED_Sound.noise(0.4, 500, 0.4); break;
     case 'ring': ED_Sound.noise(0.35, 900, 0.45); break;
     case 'enrage': ED_Sound.boss(); break;
+    case 'nova': ED_Sound.nova(); break;
+    case 'teleport': ED_Sound.teleport(); break;
+    case 'boom': ED_Sound.boom(); break;
     case 'win': ED_Sound.win(); break;
     case 'lose': ED_Sound.lose(); break;
     default: break;
@@ -69,14 +73,21 @@ function ED_rectHit(x, y, r) {
   return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
+function ED_beginRun(diffKey) {
+  ED_Sound.ensure();
+  ED_Sound.startDrone();
+  ED_Sound.click();
+  ED_world.difficulty = diffKey;
+  ED_startRun(ED_world);
+}
+
 function ED_handleShortcuts() {
   const w = ED_world;
-  if (w.screen === 'title' && (ED_Input.wasPressed('Enter') || ED_Input.wasPressed('Space'))) {
-    ED_Sound.ensure();
-    ED_Sound.startDrone();
-    ED_Sound.click();
-    ED_startRun(w);
-    return;
+  if (w.screen === 'title') {
+    if (ED_Input.wasPressed('Digit1') || ED_Input.wasPressed('Numpad1')) { ED_beginRun('normal'); return; }
+    if (ED_Input.wasPressed('Digit2') || ED_Input.wasPressed('Numpad2')) { ED_beginRun('hard'); return; }
+    if (ED_Input.wasPressed('Digit3') || ED_Input.wasPressed('Numpad3')) { ED_beginRun('endless'); return; }
+    if (ED_Input.wasPressed('Enter') || ED_Input.wasPressed('Space')) { ED_beginRun('normal'); return; }
   }
   if ((w.screen === 'over' || w.screen === 'win') && ED_Input.wasPressed('KeyR')) {
     ED_Sound.ensure();
@@ -104,10 +115,14 @@ function ED_handleClicks() {
   if (!ED_Input.mouse.clicked) return;
   const x = ED_Input.mouse.x, y = ED_Input.mouse.y;
   if (w.screen === 'title') {
-    ED_Sound.ensure();
-    ED_Sound.startDrone();
-    ED_Sound.click();
-    ED_startRun(w);
+    for (const rect of w.titleRects) {
+      if (ED_rectHit(x, y, rect)) {
+        ED_beginRun(rect.diff);
+        return;
+      }
+    }
+    // A click anywhere else on the title starts a Normal delve.
+    ED_beginRun('normal');
     return;
   }
   if (w.screen === 'draft') {
