@@ -1,4 +1,4 @@
-// EMBERDEEP — local dev server: serves game/ at http://localhost:8080
+// EMBERDEEP v3 — local dev server: serves game/ at http://localhost:8080
 // so the game plays exactly the way a static host would serve it.
 // Run: node serve.ts
 
@@ -32,5 +32,5 @@ const server = createServer((req, res) => {
 });
 
 server.listen(8080, () => {
-  console.log('EMBERDEEP at http://localhost:8080');
+  console.log('EMBERDEEP v3 at http://localhost:8080');
 });

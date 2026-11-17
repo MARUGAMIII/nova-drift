@@ -1,7 +1,8 @@
-// EMBERDEEP — the entrypoint for make.fun's best-game-01 (Node 22+, stdlib only).
+// EMBERDEEP v3 — the entrypoint for make.fun's best-game-01 (Node 22+, stdlib only).
 //
 // What it does, in order:
-//   1. Refuses to hand in a broken entry (game/index.html must exist).
+//   1. Refuses to hand in a broken entry (game/index.html must exist, and the
+//      screenshots must be real JPEG/PNG files under the 256 KiB cap).
 //   2. Copies this directory's game/ and screenshots/ into the output dir.
 //   3. Writes output/dossier.json with buildDossier from vendor/makefun-game.ts,
 //      then rebuilds it and fails loudly if the two ever differ.
@@ -48,6 +49,33 @@ function walk(dir) {
   return { files, bytes };
 }
 
+function checkGameFiles(dir) {
+  // No single game file should be anywhere near a megabyte: the game is
+  // hand-written code with no assets, so a huge file means junk slipped in.
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    const info = statSync(path);
+    if (info.isDirectory()) {
+      checkGameFiles(path);
+    } else if (info.isFile() && info.size > 1048576) {
+      throw new Error(`EMBERDEEP: ${path} is ${info.size} bytes, over the 1 MiB per-file sanity cap`);
+    }
+  }
+}
+
+function checkShotList(repoRoot, shotsDir) {
+  // shots.json is the record of how each screenshot was staged: every file
+  // it names must actually be shipped, so a stale entry cannot slip in.
+  const listPath = join(repoRoot, 'shots.json');
+  if (!existsSync(listPath)) return;
+  const wanted = JSON.parse(readFileSync(listPath, 'utf8'));
+  for (const shot of wanted) {
+    if (!existsSync(join(shotsDir, shot.name))) {
+      throw new Error(`EMBERDEEP: shots.json names ${shot.name}, but it is not in screenshots/`);
+    }
+  }
+}
+
 function checkScreenshots(dir) {
   // The gate refuses a screenshot over 256 KiB or one that is not a whole
   // PNG or JPEG: catch that here, before anything is handed in.
@@ -76,10 +104,14 @@ function main() {
   if (!existsSync(join(gameDir, 'index.html'))) {
     throw new Error('EMBERDEEP: game/index.html is missing, nothing to hand in');
   }
+  checkGameFiles(gameDir);
   if (!existsSync(shotsDir)) {
     console.warn('EMBERDEEP warning: no screenshots/ directory — the gate needs 3 or 4 screenshots');
   }
-  if (existsSync(shotsDir)) checkScreenshots(shotsDir);
+  if (existsSync(shotsDir)) {
+    checkScreenshots(shotsDir);
+    checkShotList(here, shotsDir);
+  }
 
   mkdirSync(out, { recursive: true });
   cpSync(gameDir, join(out, 'game'), { recursive: true });
