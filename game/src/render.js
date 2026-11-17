@@ -1,521 +1,614 @@
-// NOVA DRIFT — rendering: everything the player sees.
-//
-// One entry point, renderWorld(ctx, world), draws the background, the field,
-// the HUD and whichever screen the game is on. The title and game-over
-// screens also measure their buttons and store the rectangles in world.ui,
-// so main.js can answer clicks on them.
+// EMBERDEEP — all drawing: the arena, the creatures, the particles, the HUD
+// and every screen. One job: turn the world state into a picture.
 
-import { CONFIG, COLORS } from './config.js';
-import { multiplier } from './world.js';
-
-const TAU = Math.PI * 2;
-
-const FONT_UI = '"Trebuchet MS", "Segoe UI", system-ui, sans-serif';
-const FONT_DISPLAY = '"Trebuchet MS", "Segoe UI", system-ui, sans-serif';
-
-function roundRectPath(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+function ED_floorColors(world) {
+  return ED_FLOORS[world.floor - 1];
 }
 
-function text(ctx, str, x, y, font, color, align = 'center', alpha = 1) {
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.font = font;
-  ctx.fillStyle = color;
-  ctx.textAlign = align;
-  ctx.textBaseline = 'middle';
-  ctx.fillText(str, x, y);
-  ctx.restore();
-}
+function ED_drawBackground(ctx, world) {
+  const c = ED_floorColors(world);
+  const a = ED_CONFIG.arena;
+  ctx.fillStyle = c.bg;
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
 
-// The ship, drawn nose-up at (0,0) so callers can rotate it freely.
-function shipPath(ctx, r) {
-  ctx.beginPath();
-  ctx.moveTo(0, -r * 1.25);
-  ctx.lineTo(r * 0.55, r * 0.35);
-  ctx.lineTo(r * 1.05, r * 0.95);
-  ctx.lineTo(r * 0.45, r * 0.7);
-  ctx.lineTo(0, r * 0.45);
-  ctx.lineTo(-r * 0.45, r * 0.7);
-  ctx.lineTo(-r * 1.05, r * 0.95);
-  ctx.lineTo(-r * 0.55, r * 0.35);
-  ctx.closePath();
-}
+  // Arena floor with a soft radial glow in the middle.
+  const g = ctx.createRadialGradient(640, 430, 80, 640, 430, 700);
+  g.addColorStop(0, c.floor);
+  g.addColorStop(1, c.bg);
+  ctx.fillStyle = g;
+  ctx.fillRect(a.x, a.y, a.w, a.h);
 
-function drawPlayer(ctx, world) {
-  const player = world.player;
-  const blink = world.time < player.invulnUntil && Math.floor(world.time * 12) % 2 === 0;
-  ctx.save();
-  ctx.translate(player.x, player.y);
-  ctx.rotate(player.angle + Math.PI / 2);
-  if (blink) ctx.globalAlpha = 0.35;
-  // Engine flame while thrusting.
-  if (player.thrusting) {
-    const flicker = 0.7 + Math.random() * 0.5;
+  // Decor: rocks and glowing crystals.
+  for (const d of world.decor) {
     ctx.save();
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = '#ffcf5c';
-    ctx.beginPath();
-    ctx.moveTo(-5, player.r * 0.55);
-    ctx.lineTo(0, player.r * (1.1 + 0.5 * flicker));
-    ctx.lineTo(5, player.r * 0.55);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.shadowColor = COLORS.ship;
-  ctx.shadowBlur = 18;
-  shipPath(ctx, player.r);
-  ctx.fillStyle = COLORS.ship;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = COLORS.shipCore;
-  ctx.beginPath();
-  ctx.arc(0, -player.r * 0.35, player.r * 0.22, 0, TAU);
-  ctx.fill();
-  ctx.restore();
-  // Shield ring.
-  if (player.shield) {
-    ctx.save();
-    ctx.strokeStyle = COLORS.shield;
-    ctx.globalAlpha = 0.65 + 0.25 * Math.sin(world.time * 5);
-    ctx.lineWidth = 2;
-    ctx.shadowColor = COLORS.shield;
-    ctx.shadowBlur = 12;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.r + 9, 0, TAU);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
-function drawAsteroid(ctx, rock) {
-  ctx.save();
-  ctx.translate(rock.x, rock.y);
-  ctx.rotate(rock.rot);
-  ctx.beginPath();
-  rock.points.forEach((point, i) => {
-    const px = Math.cos(point.angle) * rock.r * point.factor;
-    const py = Math.sin(point.angle) * rock.r * point.factor;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  });
-  ctx.closePath();
-  ctx.fillStyle = '#241a12';
-  ctx.fill();
-  ctx.shadowColor = COLORS.asteroid;
-  ctx.shadowBlur = 10;
-  ctx.strokeStyle = COLORS.asteroid;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-  // Inner ridge for depth.
-  ctx.beginPath();
-  rock.points.forEach((point, i) => {
-    const px = Math.cos(point.angle) * rock.r * point.factor * 0.55;
-    const py = Math.sin(point.angle) * rock.r * point.factor * 0.55;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  });
-  ctx.closePath();
-  ctx.strokeStyle = COLORS.asteroidDark;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawWisp(ctx, wisp, world) {
-  const pulse = 1 + 0.18 * Math.sin(wisp.phase);
-  ctx.save();
-  ctx.translate(wisp.x, wisp.y);
-  ctx.shadowColor = COLORS.wisp;
-  ctx.shadowBlur = 16;
-  ctx.fillStyle = wisp.flash > 0 ? '#ffffff' : COLORS.wisp;
-  ctx.beginPath();
-  ctx.arc(0, 0, wisp.r * pulse, 0, TAU);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#ffd7f6';
-  ctx.beginPath();
-  ctx.arc(-wisp.r * 0.25, -wisp.r * 0.25, wisp.r * 0.35, 0, TAU);
-  ctx.fill();
-  ctx.strokeStyle = COLORS.wisp;
-  ctx.globalAlpha = 0.5;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(0, 0, wisp.r * pulse + 6, 0, TAU);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawShard(ctx, shard) {
-  ctx.save();
-  ctx.translate(shard.x, shard.y);
-  ctx.rotate(shard.spin);
-  ctx.shadowColor = COLORS.shard;
-  ctx.shadowBlur = 12;
-  ctx.fillStyle = COLORS.shard;
-  ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(6, 0);
-  ctx.lineTo(0, 8);
-  ctx.lineTo(-6, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff6c8';
-  ctx.beginPath();
-  ctx.moveTo(0, -4);
-  ctx.lineTo(3, 0);
-  ctx.lineTo(0, 4);
-  ctx.lineTo(-3, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
-const POWERUP_STYLE = {
-  shield: { color: COLORS.shield, label: 'SHIELD' },
-  rapid: { color: COLORS.rapid, label: 'RAPID' },
-  spread: { color: COLORS.spread, label: 'SPREAD' },
-  life: { color: COLORS.life, label: '+1 LIFE' },
-};
-
-function drawPowerup(ctx, power) {
-  const style = POWERUP_STYLE[power.kind];
-  const bob = Math.sin(power.pulse) * 3;
-  const alpha = power.life < 3 ? 0.45 + 0.4 * Math.sin(power.pulse * 2) : 1;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(power.x, power.y + bob);
-  ctx.shadowColor = style.color;
-  ctx.shadowBlur = 14;
-  ctx.fillStyle = '#0d1526';
-  ctx.strokeStyle = style.color;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, 15, 0, TAU);
-  ctx.fill();
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = style.color;
-  if (power.kind === 'shield') {
-    ctx.beginPath();
-    ctx.arc(0, 0, 7, 0, TAU);
-    ctx.stroke();
-  } else if (power.kind === 'rapid') {
-    ctx.beginPath();
-    ctx.moveTo(2, -8);
-    ctx.lineTo(-4, 1);
-    ctx.lineTo(0, 1);
-    ctx.lineTo(-2, 8);
-    ctx.lineTo(4, -1);
-    ctx.lineTo(0, -1);
-    ctx.closePath();
-    ctx.fill();
-  } else if (power.kind === 'spread') {
-    for (const [dx, dy] of [[-5, 3], [0, -4], [5, 3]]) {
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.rot);
+    if (d.crystal) {
+      ctx.fillStyle = c.glow;
+      ctx.globalAlpha = 0.55;
       ctx.beginPath();
-      ctx.arc(dx, dy, 2.6, 0, TAU);
+      ctx.moveTo(0, -d.r);
+      ctx.lineTo(d.r * 0.6, 0);
+      ctx.lineTo(0, d.r);
+      ctx.lineTo(-d.r * 0.6, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = c.wall;
+      ctx.beginPath();
+      ctx.arc(0, 0, d.r, 0, Math.PI * 2);
       ctx.fill();
     }
-  } else {
-    ctx.fillRect(-2, -7, 4, 14);
-    ctx.fillRect(-7, -2, 14, 4);
-  }
-  ctx.restore();
-  text(ctx, style.label, power.x, power.y + bob + 26, `700 10px ${FONT_UI}`, style.color, 'center', alpha);
-}
-
-function drawBackground(ctx, world) {
-  ctx.fillStyle = COLORS.background;
-  ctx.fillRect(0, 0, world.width, world.height);
-  if (world.nebula) {
-    ctx.drawImage(world.nebula, 0, 0, world.width, world.height);
-  }
-  for (const star of world.stars) {
-    const twinkle = 0.45 + 0.55 * Math.abs(Math.sin(star.twinkle));
-    ctx.globalAlpha = twinkle * (0.35 + star.layer * 0.25);
-    ctx.fillStyle = star.layer === 2 ? '#cfe8ff' : '#8fb8dd';
-    ctx.fillRect(star.x, star.y, star.size, star.size);
-  }
-  ctx.globalAlpha = 1;
-  // Soft vignette so the edges fall away from the action.
-  const vignette = ctx.createRadialGradient(
-    world.width / 2, world.height / 2, Math.min(world.width, world.height) * 0.45,
-    world.width / 2, world.height / 2, Math.max(world.width, world.height) * 0.75,
-  );
-  vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(0,0,0,0.45)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, world.width, world.height);
-}
-
-function drawBullets(ctx, world) {
-  ctx.save();
-  ctx.lineCap = 'round';
-  for (const bullet of world.bullets) {
-    const tailX = bullet.x - bullet.vx * 0.022;
-    const tailY = bullet.y - bullet.vy * 0.022;
-    ctx.strokeStyle = COLORS.bullet;
-    ctx.shadowColor = COLORS.bullet;
-    ctx.shadowBlur = 10;
-    ctx.lineWidth = 3.5;
-    ctx.beginPath();
-    ctx.moveTo(tailX, tailY);
-    ctx.lineTo(bullet.x, bullet.y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawParticles(ctx, world) {
-  for (const p of world.particles) {
-    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
-  }
-  ctx.globalAlpha = 1;
-}
-
-function drawFloaters(ctx, world) {
-  for (const f of world.floaters) {
-    const alpha = Math.max(0, Math.min(1, f.life / f.maxLife));
-    text(ctx, f.text, f.x, f.y, `800 17px ${FONT_UI}`, f.color, 'center', alpha);
-  }
-}
-
-function drawLivesIcon(ctx, x, y, scale) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(-Math.PI / 2);
-  ctx.scale(scale, scale);
-  shipPath(ctx, 10);
-  ctx.fillStyle = COLORS.ship;
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawHud(ctx, world) {
-  const pad = 18;
-  // Score, top left.
-  text(ctx, 'SCORE', pad, pad + 8, `700 11px ${FONT_UI}`, COLORS.textDim, 'left');
-  text(ctx, String(world.score), pad, pad + 30, `800 26px ${FONT_UI}`, COLORS.text, 'left');
-  text(ctx, `BEST ${Math.max(world.best, world.score)}`, pad, pad + 54, `600 12px ${FONT_UI}`, COLORS.textDim, 'left');
-  // Combo meter under the score.
-  const mult = multiplier(world);
-  if (mult > 1 && world.comboTimer > 0) {
-    const barW = 110;
-    const frac = world.comboTimer / CONFIG.comboWindow;
-    text(ctx, `COMBO x${mult}`, pad, pad + 78, `800 14px ${FONT_UI}`, COLORS.shard, 'left');
-    ctx.fillStyle = 'rgba(255,217,74,0.25)';
-    ctx.fillRect(pad, pad + 88, barW, 5);
-    ctx.fillStyle = COLORS.shard;
-    ctx.fillRect(pad, pad + 88, barW * frac, 5);
-  }
-  // Wave, top center.
-  text(ctx, `WAVE ${Math.max(1, world.wave)}`, world.width / 2, pad + 16, `800 18px ${FONT_UI}`, COLORS.text, 'center');
-  const remaining = world.asteroids.length + world.wisps.length;
-  text(ctx, `${remaining} HOSTILE${remaining === 1 ? '' : 'S'} LEFT`, world.width / 2, pad + 38, `600 11px ${FONT_UI}`, COLORS.textDim, 'center');
-  // Lives and power-ups, top right.
-  const lives = world.player.lives;
-  for (let i = 0; i < lives; i += 1) {
-    drawLivesIcon(ctx, world.width - pad - 12 - i * 26, pad + 16, 1);
-  }
-  let chipY = pad + 44;
-  const chips = [];
-  if (world.player.shield) chips.push(['SHIELD', COLORS.shield]);
-  if (world.time < world.player.rapidUntil) chips.push([`RAPID ${Math.ceil(world.player.rapidUntil - world.time)}s`, COLORS.rapid]);
-  if (world.time < world.player.spreadUntil) chips.push([`SPREAD ${Math.ceil(world.player.spreadUntil - world.time)}s`, COLORS.spread]);
-  for (const [label, color] of chips) {
-    ctx.font = `700 11px ${FONT_UI}`;
-    const w = ctx.measureText(label).width + 16;
-    ctx.fillStyle = 'rgba(10,18,36,0.7)';
-    roundRectPath(ctx, world.width - pad - w, chipY, w, 20, 10);
-    ctx.fill();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    text(ctx, label, world.width - pad - w / 2, chipY + 11, `700 11px ${FONT_UI}`, color, 'center');
-    chipY += 26;
-  }
-  // Controls hint, fading out after a few seconds of play.
-  if (world.hintTimer > 0 && world.phase === 'playing') {
-    const alpha = Math.min(1, world.hintTimer / 2);
-    text(ctx, 'WASD / ARROWS — steer    ·    MOUSE — aim    ·    CLICK / SPACE — fire    ·    P — pause    ·    M — mute', world.width / 2, world.height - 22, `600 13px ${FONT_UI}`, COLORS.textDim, 'center', alpha);
-  }
-  // Mute state, bottom right.
-  if (world.muted) {
-    text(ctx, 'SOUND OFF  (M)', world.width - pad, world.height - 22, `700 12px ${FONT_UI}`, COLORS.textDim, 'right');
-  }
-  // Wave banner.
-  if (world.waveBanner > 0 && world.phase === 'playing') {
-    const alpha = Math.min(1, world.waveBanner);
-    text(ctx, `WAVE ${world.wave}`, world.width / 2, world.height * 0.38, `900 54px ${FONT_DISPLAY}`, COLORS.text, 'center', alpha);
-    text(ctx, world.wave >= CONFIG.wispFirstWave ? 'WARNING: VOID WISPS INBOUND' : 'CLEAR THE FIELD', world.width / 2, world.height * 0.38 + 44, `700 14px ${FONT_UI}`, COLORS.shard, 'center', alpha);
-  }
-}
-
-function drawButton(ctx, label, cx, y, w, h, color) {
-  const x = cx - w / 2;
-  ctx.save();
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 18;
-  ctx.fillStyle = 'rgba(10,20,40,0.85)';
-  roundRectPath(ctx, x, y, w, h, 10);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  text(ctx, label, cx, y + h / 2 + 1, `800 18px ${FONT_UI}`, color, 'center');
-  ctx.restore();
-  return { x, y, w, h };
-}
-
-function drawTitle(ctx, world) {
-  // A dim veil over the drifting field so the text reads.
-  const veil = ctx.createLinearGradient(0, 0, 0, world.height);
-  veil.addColorStop(0, 'rgba(4,6,18,0.25)');
-  veil.addColorStop(0.5, 'rgba(4,6,18,0.55)');
-  veil.addColorStop(1, 'rgba(4,6,18,0.8)');
-  ctx.fillStyle = veil;
-  ctx.fillRect(0, 0, world.width, world.height);
-
-  const cx = world.width / 2;
-  // A big ship gliding above the title, with orbiting shards.
-  const shipY = world.height * 0.2;
-  ctx.save();
-  ctx.translate(cx, shipY);
-  ctx.rotate(Math.sin(world.time * 0.5) * 0.12);
-  ctx.shadowColor = COLORS.ship;
-  ctx.shadowBlur = 26;
-  shipPath(ctx, 30);
-  ctx.fillStyle = COLORS.ship;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = COLORS.shipCore;
-  ctx.beginPath();
-  ctx.arc(0, -10, 6, 0, TAU);
-  ctx.fill();
-  ctx.restore();
-  for (let i = 0; i < 3; i += 1) {
-    const angle = world.time * 0.7 + (i * TAU) / 3;
-    const sx = cx + Math.cos(angle) * 86;
-    const sy = shipY + Math.sin(angle) * 30;
-    drawShard(ctx, { x: sx, y: sy, spin: angle });
-  }
-
-  ctx.save();
-  try { ctx.letterSpacing = '10px'; } catch { /* older canvas: no letter spacing */ }
-  ctx.shadowColor = COLORS.ship;
-  ctx.shadowBlur = 22;
-  text(ctx, 'NOVA DRIFT', cx, world.height * 0.38, `900 64px ${FONT_DISPLAY}`, COLORS.text);
-  ctx.restore();
-  text(ctx, 'A NEON ASTEROID SURVIVAL ARCADE', cx, world.height * 0.38 + 48, `700 15px ${FONT_UI}`, COLORS.shard);
-  text(ctx, 'Blast the rocks. Grab the shards. Chain kills for combos. Survive the drift.', cx, world.height * 0.38 + 78, `400 14px ${FONT_UI}`, COLORS.textDim);
-
-  const lines = [
-    'WASD / ARROW KEYS — steer the ship',
-    'MOUSE — aim the cannon      CLICK / SPACE — fire',
-    'SHATTER BIG ROCKS — they split in two      DODGE THE VOID WISPS',
-    '3 LIVES — shields, rapid fire and spread shot drop from the wreckage',
-  ];
-  const boxY = world.height * 0.52;
-  lines.forEach((line, i) => {
-    text(ctx, line, cx, boxY + i * 24, `600 14px ${FONT_UI}`, COLORS.text, 'center');
-  });
-
-  if (world.best > 0) {
-    text(ctx, `BEST SCORE  ${world.best}`, cx, boxY + lines.length * 24 + 14, `800 15px ${FONT_UI}`, COLORS.shard);
-  }
-
-  const pulse = 0.75 + 0.25 * Math.sin(world.time * 4);
-  world.ui.launch = drawButton(ctx, '▶  LAUNCH', cx, world.height * 0.74, 220, 54, COLORS.ship);
-  text(ctx, 'or press ENTER', cx, world.height * 0.74 + 74, `600 13px ${FONT_UI}`, COLORS.textDim, 'center', pulse);
-  text(ctx, 'M — mute sound      ·      P — pause      ·      R — restart', cx, world.height - 24, `600 12px ${FONT_UI}`, COLORS.textDim);
-}
-
-function drawPaused(ctx, world) {
-  ctx.fillStyle = 'rgba(4,6,18,0.72)';
-  ctx.fillRect(0, 0, world.width, world.height);
-  text(ctx, 'PAUSED', world.width / 2, world.height * 0.4, `900 52px ${FONT_DISPLAY}`, COLORS.text);
-  text(ctx, 'The drift waits for no one — except now.', world.width / 2, world.height * 0.4 + 44, `400 15px ${FONT_UI}`, COLORS.textDim);
-  world.ui.resume = drawButton(ctx, 'RESUME', world.width / 2, world.height * 0.52, 200, 50, COLORS.ship);
-  text(ctx, 'or press P', world.width / 2, world.height * 0.52 + 70, `600 13px ${FONT_UI}`, COLORS.textDim);
-}
-
-function drawGameOver(ctx, world) {
-  ctx.fillStyle = 'rgba(4,6,18,0.78)';
-  ctx.fillRect(0, 0, world.width, world.height);
-  const cx = world.width / 2;
-  text(ctx, 'GAME OVER', cx, world.height * 0.28, `900 56px ${FONT_DISPLAY}`, COLORS.danger);
-  text(ctx, 'The drift claims another pilot.', cx, world.height * 0.28 + 44, `400 15px ${FONT_UI}`, COLORS.textDim);
-
-  const accuracy = world.stats.shots > 0 ? Math.round((world.stats.hits / world.stats.shots) * 100) : 0;
-  const rows = [
-    ['SCORE', String(world.score), COLORS.text],
-    ['BEST', String(Math.max(world.best, world.score)), COLORS.shard],
-    ['WAVE REACHED', String(Math.max(1, world.wave)), COLORS.text],
-    ['ROCKS SHATTERED', String(world.stats.kills), COLORS.text],
-    ['ACCURACY', `${accuracy}%`, COLORS.text],
-  ];
-  const panelW = 340;
-  const panelH = rows.length * 34 + 28;
-  const panelX = cx - panelW / 2;
-  const panelY = world.height * 0.38;
-  ctx.fillStyle = 'rgba(10,18,36,0.85)';
-  roundRectPath(ctx, panelX, panelY, panelW, panelH, 12);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(125,249,255,0.35)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  rows.forEach(([label, value, color], i) => {
-    const y = panelY + 28 + i * 34;
-    text(ctx, label, panelX + 20, y, `700 13px ${FONT_UI}`, COLORS.textDim, 'left');
-    text(ctx, value, panelX + panelW - 20, y, `800 16px ${FONT_UI}`, color, 'right');
-  });
-  if (world.newBest) {
-    text(ctx, '★ NEW BEST SCORE ★', cx, panelY + panelH + 26, `800 16px ${FONT_UI}`, COLORS.shard);
-  }
-
-  world.ui.again = drawButton(ctx, '↻  FLY AGAIN', cx, world.height * 0.78, 230, 54, COLORS.ship);
-  text(ctx, 'or press R', cx, world.height * 0.78 + 74, `600 13px ${FONT_UI}`, COLORS.textDim);
-}
-
-export function renderWorld(ctx, world) {
-  ctx.save();
-  if (world.shake > 0.5) {
-    const magnitude = world.shake * 0.6;
-    ctx.translate((Math.random() - 0.5) * magnitude, (Math.random() - 0.5) * magnitude);
-  }
-  drawBackground(ctx, world);
-
-  if (world.phase === 'title') {
-    for (const rock of world.titleRocks) drawAsteroid(ctx, rock);
-    drawParticles(ctx, world);
-    drawTitle(ctx, world);
     ctx.restore();
-    return;
+  }
+  ctx.globalAlpha = 1;
+
+  // Arena border.
+  ctx.strokeStyle = c.accent;
+  ctx.globalAlpha = 0.7;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(a.x, a.y, a.w, a.h);
+  ctx.globalAlpha = 1;
+
+  // The descent gate, when open.
+  if (world.gate) {
+    const gt = world.gate;
+    const pulse = 1 + Math.sin(world.time * 4) * 0.08;
+    ctx.save();
+    ctx.translate(gt.x, gt.y);
+    ctx.scale(pulse, pulse);
+    ctx.fillStyle = '#ffd94a';
+    ctx.beginPath();
+    ctx.arc(0, 0, gt.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#2a130c';
+    ctx.beginPath();
+    ctx.arc(0, 0, gt.r - 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('▼', 0, 1);
+    ctx.restore();
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('DESCEND — walk in', gt.x, gt.y + gt.r + 22);
+  }
+}
+
+function ED_drawPickups(ctx, world) {
+  for (const pk of world.pickups) {
+    const blink = pk.life < 3 ? (Math.sin(world.time * 12) > 0 ? 1 : 0.35) : 1;
+    ctx.globalAlpha = blink;
+    if (pk.kind === 'shard') {
+      ctx.fillStyle = '#ffd94a';
+      ctx.save();
+      ctx.translate(pk.x, pk.y);
+      ctx.rotate(world.time * 3);
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#ff6b81';
+      ctx.beginPath();
+      ctx.arc(pk.x - 4, pk.y - 2, 5, 0, Math.PI * 2);
+      ctx.arc(pk.x + 4, pk.y - 2, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(pk.x - 8, pk.y);
+      ctx.lineTo(pk.x + 8, pk.y);
+      ctx.lineTo(pk.x, pk.y + 9);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function ED_drawEnemy(ctx, world, e) {
+  const c = ED_floorColors(world);
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  if (e.flash > 0) {
+    ctx.fillStyle = '#ffffff';
+  } else {
+    ctx.fillStyle = e.color;
+  }
+  const wob = Math.sin(e.t * 6) * 0.08;
+  ctx.rotate(wob);
+
+  if (e.type === 'mite') {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const px = Math.cos(a) * e.radius, py = Math.sin(a) * e.radius;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = e.dark;
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.45, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === 'spitter') {
+    ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = e.dark;
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(4, -3, 3, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === 'splitter') {
+    ctx.beginPath(); ctx.arc(0, 0, e.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = e.dark; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-e.radius * 0.6, 0); ctx.lineTo(e.radius * 0.6, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -e.radius * 0.6); ctx.lineTo(0, e.radius * 0.6); ctx.stroke();
+  } else if (e.type === 'wisp') {
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(0, 0, e.radius + 4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === 'golem') {
+    ctx.fillRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
+    ctx.fillStyle = e.dark;
+    ctx.fillRect(-e.radius * 0.6, -e.radius * 0.6, e.radius * 1.2, e.radius * 1.2);
+    ctx.fillStyle = c.glow;
+    ctx.beginPath(); ctx.arc(-6, -4, 3, 0, Math.PI * 2); ctx.arc(6, -4, 3, 0, Math.PI * 2); ctx.fill();
+  } else if (e.type === 'colossus') {
+    // Crystal golem: big faceted body, glowing core, crown spikes.
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const px = Math.cos(a) * e.radius, py = Math.sin(a) * e.radius;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = e.dark;
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.28, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = e.color; ctx.lineWidth = 4;
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i - 2) * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * e.radius * 0.8, Math.sin(a) * e.radius * 0.8);
+      ctx.lineTo(Math.cos(a) * (e.radius + 16), Math.sin(a) * (e.radius + 16));
+      ctx.stroke();
+    }
+    if (e.slamming > 0) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, e.radius + 14, 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (e.type === 'heart') {
+    // The Magma Heart: pulsing core with flame petals.
+    const pulse = 1 + Math.sin(world.time * 3) * 0.06;
+    ctx.scale(pulse, pulse);
+    ctx.fillStyle = e.dark;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + world.time * 0.4;
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * e.radius * 0.9, Math.sin(a) * e.radius * 0.9, 16, 9, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = e.color;
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.72, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd94a';
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(0, 0, e.radius * 0.18, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+
+  // Health bar for tough enemies and bosses.
+  if ((e.boss || e.type === 'golem') && e.hp < e.maxHp) {
+    const w = e.radius * 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(e.x - w / 2, e.y - e.radius - 14, w, 5);
+    ctx.fillStyle = e.boss ? '#ff5a2e' : '#ffd94a';
+    ctx.fillRect(e.x - w / 2, e.y - e.radius - 14, w * (e.hp / e.maxHp), 5);
+  }
+}
+
+function ED_drawPlayer(ctx, world) {
+  const p = world.player;
+  const c = ED_floorColors(world);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  // Dash trail.
+  if (p.dashTimer > 0) {
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = c.ember;
+    ctx.beginPath(); ctx.arc(-p.dashDirX * 26, -p.dashDirY * 26, p.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
-  for (const shard of world.shards) drawShard(ctx, shard);
-  for (const power of world.powerups) drawPowerup(ctx, power);
-  for (const rock of world.asteroids) drawAsteroid(ctx, rock);
-  for (const wisp of world.wisps) drawWisp(ctx, wisp, world);
-  drawBullets(ctx, world);
-  if (world.phase !== 'over') drawPlayer(ctx, world);
-  drawParticles(ctx, world);
-  drawFloaters(ctx, world);
-  drawHud(ctx, world);
+  // Slow aura ring.
+  if (p.aura > 0) {
+    ctx.strokeStyle = c.glow;
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, 130, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 
-  if (world.phase === 'paused') drawPaused(ctx, world);
-  if (world.phase === 'over') drawGameOver(ctx, world);
+  // Orbiting embers.
+  if (p.orbits > 0) {
+    for (let i = 0; i < p.orbits; i++) {
+      const ang = p.orbitAngle + (i / p.orbits) * Math.PI * 2;
+      ctx.fillStyle = '#ffb35c';
+      ctx.beginPath(); ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff3c4';
+      ctx.beginPath(); ctx.arc(Math.cos(ang) * 52, Math.sin(ang) * 52, 3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Blink while invulnerable.
+  if (p.invuln > 0 && Math.floor(world.time * 14) % 2 === 0) ctx.globalAlpha = 0.45;
+
+  // The warden: hooded figure with a glowing staff, rotated toward the aim.
+  ctx.rotate(p.aim);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.beginPath(); ctx.arc(0, 0, p.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ff9a3c';
+  ctx.beginPath(); ctx.arc(0, 0, p.radius - 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a130c';
+  ctx.beginPath(); ctx.arc(-2, 0, p.radius - 8, 0, Math.PI * 2); ctx.fill();
+  // Staff pointing at the aim.
+  ctx.strokeStyle = '#8a5a2b';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(6, 6); ctx.lineTo(26, -2); ctx.stroke();
+  ctx.fillStyle = '#ffd94a';
+  ctx.beginPath(); ctx.arc(28, -2, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff3c4';
+  ctx.beginPath(); ctx.arc(28, -2, 3, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+
+  // Bright ring so the warden always reads as the player, never as a foe.
+  ctx.strokeStyle = '#ffffff';
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 4, 0, Math.PI * 2); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Shield ring.
+  if (p.shield) {
+    ctx.strokeStyle = '#59d8ff';
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Dash cooldown arc under the player.
+  if (p.dashCd > 0) {
+    const frac = 1 - p.dashCd / ED_playerDashCooldown(p);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 14, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+  }
+}
+
+function ED_drawHud(ctx, world) {
+  const c = ED_floorColors(world);
+  const p = world.player;
+  ctx.textBaseline = 'alphabetic';
+
+  // Top bar.
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.hudHeight);
+
+  // Hearts.
+  for (let i = 0; i < p.maxHearts; i++) {
+    const x = 56 + i * 34, y = 40;
+    ctx.fillStyle = i < p.hearts ? '#ff6b81' : 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.arc(x - 5, y - 3, 7, 0, Math.PI * 2);
+    ctx.arc(x + 5, y - 3, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x - 11, y);
+    ctx.lineTo(x + 11, y);
+    ctx.lineTo(x, y + 12);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Floor and wave.
+  ctx.fillStyle = c.text;
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(c.name.toUpperCase(), 56, 84);
+  const nameW = ctx.measureText(c.name.toUpperCase()).width;
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = c.accent;
+  const waveLabel = world.boss ? 'BOSS' : (world.waveState === 'done' ? 'FLOOR CLEAR' : 'Wave ' + Math.max(1, world.wave) + ' / ' + ED_CONFIG.wavesPerFloor);
+  ctx.fillText(waveLabel, 56 + nameW + 24, 84);
+
+  // Score and shards, right side.
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText('SCORE ' + world.score, 1224, 44);
+  ctx.fillStyle = c.text;
+  ctx.font = '16px sans-serif';
+  ctx.fillText('◆ ' + world.shards + ' shards   •   Floor ' + world.floor + ' / ' + ED_CONFIG.floors, 1224, 72);
+
+  // Relics owned, as a row of small badges.
+  const ids = Object.keys(p.relics);
+  ctx.textAlign = 'left';
+  ctx.font = '13px sans-serif';
+  let rx = 560;
+  for (const id of ids) {
+    const relic = ED_RELICS.find((r) => r.id === id);
+    if (!relic) continue;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath(); ctx.arc(rx, 40, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd94a';
+    ctx.textAlign = 'center';
+    ctx.fillText(relic.name[0], rx, 45);
+    ctx.fillStyle = c.text;
+    ctx.font = '11px sans-serif';
+    ctx.fillText('x' + p.relics[id], rx, 62);
+    ctx.font = '13px sans-serif';
+    rx += 34;
+  }
+  ctx.textAlign = 'left';
+
+  // Boss bar.
+  if (world.boss) {
+    const b = world.boss;
+    const bw = 560;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.type === 'colossus' ? 'CINDER COLOSSUS' : 'THE MAGMA HEART', 640, 76);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(640 - bw / 2, 82, bw, 12);
+    ctx.fillStyle = '#ff5a2e';
+    ctx.fillRect(640 - bw / 2, 82, bw * Math.max(0, b.hp / b.maxHp), 12);
+  }
+
+  // Low-health vignette pulse.
+  if (p.hearts <= 2 && world.screen === 'playing') {
+    const a = 0.14 + Math.sin(world.time * 5) * 0.07;
+    const g = ctx.createRadialGradient(640, 400, 260, 640, 400, 720);
+    g.addColorStop(0, 'rgba(255,0,0,0)');
+    g.addColorStop(1, 'rgba(255,0,0,' + a + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  }
+}
+
+function ED_centerPanel(ctx, w, h, color) {
+  ctx.fillStyle = 'rgba(8,4,2,0.72)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  ctx.fillStyle = color;
+  ctx.fillRect(640 - w / 2, 400 - h / 2, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(640 - w / 2, 400 - h / 2, w, h);
+}
+
+function ED_drawTitle(ctx, world) {
+  const c = ED_floorColors(world);
+  ctx.fillStyle = '#160d08';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  // Drifting embers behind the title.
+  for (let i = 0; i < 70; i++) {
+    const x = (i * 173 + world.time * (20 + (i % 5) * 9)) % 1280;
+    const y = 800 - ((i * 269 + world.time * (12 + (i % 3) * 7)) % 820);
+    ctx.fillStyle = i % 3 === 0 ? '#ffb35c' : '#ff6a3c';
+    ctx.globalAlpha = 0.25 + (i % 4) * 0.15;
+    ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ff9a3c';
+  ctx.font = 'bold 92px sans-serif';
+  ctx.fillText('EMBERDEEP', 640, 250);
+  ctx.fillStyle = '#f5d9b0';
+  ctx.font = '22px sans-serif';
+  ctx.fillText('Delve of the Living Mountain', 640, 292);
+  ctx.fillStyle = c.accent;
+  ctx.font = '17px sans-serif';
+  ctx.fillText('Five floors. Two bosses. One heart to kill.', 640, 326);
+
+  ctx.fillStyle = '#e8d9c0';
+  ctx.font = '18px sans-serif';
+  const lines = [
+    'WASD / arrows — move      Mouse — aim      Click / Space — fire embers',
+    'Shift / right-click — dash through danger      1 / 2 / 3 — pick a relic',
+    'Clear every wave, walk into the gate, choose a relic, descend deeper.',
+    'P — pause      M — mute      R — delve again',
+  ];
+  lines.forEach((line, i) => ctx.fillText(line, 640, 420 + i * 30));
+
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 24px sans-serif';
+  const blink = Math.sin(world.time * 3) > -0.2;
+  if (blink) ctx.fillText('— click or press Enter to descend —', 640, 580);
+  if (world.best > 0) {
+    ctx.fillStyle = '#9fb8d8';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Best score: ' + world.best, 640, 622);
+  }
+  ctx.textAlign = 'left';
+}
+
+function ED_drawCard(ctx, world) {
+  const c = ED_floorColors(world);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = c.glow;
+  ctx.font = 'bold 64px sans-serif';
+  ctx.fillText(c.name.toUpperCase(), 640, 380);
+  ctx.fillStyle = c.text;
+  ctx.font = '22px sans-serif';
+  ctx.fillText(c.sub, 640, 424);
+  if (c.boss) {
+    ctx.fillStyle = '#ff5a2e';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('⚠ BOSS FLOOR ⚠', 640, 466);
+  }
+  ctx.textAlign = 'left';
+}
+
+function ED_drawDraft(ctx, world) {
+  const c = ED_floorColors(world);
+  ctx.fillStyle = 'rgba(8,4,2,0.82)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('CHOOSE A RELIC', 640, 170);
+  ctx.fillStyle = c.text;
+  ctx.font = '18px sans-serif';
+  ctx.fillText('The mountain offers three. Take one, then descend.', 640, 204);
+
+  const bw = 280, bh = 220, gap = 40;
+  const total = bw * 3 + gap * 2;
+  const x0 = 640 - total / 2;
+  world.draftRects = [];
+  world.draft.forEach((relic, i) => {
+    const x = x0 + i * (bw + gap);
+    const y = 260;
+    world.draftRects.push({ x, y, w: bw, h: bh });
+    ctx.fillStyle = '#241a14';
+    ctx.fillRect(x, y, bw, bh);
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, bw, bh);
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(relic.name, x + bw / 2, y + 52);
+    ctx.fillStyle = c.text;
+    ctx.font = '16px sans-serif';
+    ctx.fillText(relic.desc, x + bw / 2, y + 92);
+    const lvl = ED_relicLevel(world.player, relic.id);
+    ctx.fillStyle = '#9fb8d8';
+    ctx.font = '15px sans-serif';
+    ctx.fillText(lvl > 0 ? 'Owned level ' + lvl + ' → ' + (lvl + 1) : 'New relic', x + bw / 2, y + 128);
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('Press ' + (i + 1) + ' or click', x + bw / 2, y + 178);
+  });
+  ctx.textAlign = 'left';
+}
+
+function ED_drawPaused(ctx, world) {
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f5d9b0';
+  ctx.font = 'bold 56px sans-serif';
+  ctx.fillText('PAUSED', 640, 380);
+  ctx.font = '18px sans-serif';
+  ctx.fillText('P / Esc — resume      R — restart the delve      M — mute', 640, 424);
+  ctx.textAlign = 'left';
+}
+
+function ED_drawEnd(ctx, world, won) {
+  const c = ED_floorColors(world);
+  ctx.fillStyle = won ? 'rgba(20,12,2,0.78)' : 'rgba(10,2,2,0.78)';
+  ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = won ? '#ffd94a' : '#ff5c5c';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.fillText(won ? 'THE HEART IS STILL' : 'THE MOUNTAIN TAKES YOU', 640, 300);
+  ctx.fillStyle = c.text;
+  ctx.font = '22px sans-serif';
+  ctx.fillText(won
+    ? 'The Magma Heart cools. Asha climbs out into the dawn.'
+    : 'The ember fades… but wardens do not stay down.', 640, 346);
+
+  const acc = world.shots > 0 ? Math.round((world.hits / world.shots) * 100) : 0;
+  const mins = Math.floor(world.runTime / 60);
+  const secs = Math.floor(world.runTime % 60);
+  ctx.fillStyle = '#e8d9c0';
+  ctx.font = '20px sans-serif';
+  const stats = [
+    'Score: ' + world.score + (world.newBest ? '  —  NEW BEST!' : '   (best ' + world.best + ')'),
+    'Floors reached: ' + world.floor + ' / 5      Kills: ' + world.kills,
+    'Accuracy: ' + acc + '%      Time: ' + mins + ':' + String(secs).padStart(2, '0'),
+  ];
+  stats.forEach((line, i) => ctx.fillText(line, 640, 420 + i * 34));
+
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 24px sans-serif';
+  const blink = Math.sin(world.time * 3) > -0.2;
+  if (blink) ctx.fillText('— press R or click to delve again —', 640, 580);
+  ctx.textAlign = 'left';
+}
+
+function ED_draw(ctx, world) {
+  ctx.save();
+  if (world.shake > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * world.shake,
+      (Math.random() - 0.5) * world.shake,
+    );
+  }
+  if (world.screen === 'title') {
+    ED_drawTitle(ctx, world);
+  } else {
+    ED_drawBackground(ctx, world);
+    ED_drawPickups(ctx, world);
+    // Shockwave rings under everything else.
+    for (const r of world.rings) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.globalAlpha = Math.max(0, 1 - r.r / r.maxR);
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const e of world.enemies) ED_drawEnemy(ctx, world, e);
+    // Player bolts.
+    for (const b of world.bullets) {
+      ctx.fillStyle = b.crit ? '#ffd94a' : '#ffb35c';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius + 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff3c4';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+    // Enemy globs.
+    for (const b of world.ebullets) {
+      ctx.fillStyle = '#ff4d6a';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff8aa0';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+    if (world.screen !== 'over' && world.screen !== 'win') ED_drawPlayer(ctx, world);
+    // Particles.
+    for (const pt of world.particles) {
+      ctx.globalAlpha = Math.max(0, pt.life / pt.maxLife);
+      ctx.fillStyle = pt.color;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Floating text.
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px sans-serif';
+    for (const t of world.texts) {
+      ctx.globalAlpha = Math.max(0, t.life / 0.9);
+      ctx.fillStyle = t.color;
+      ctx.fillText(t.text, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+
+    ED_drawHud(ctx, world);
+    if (world.screen === 'card') ED_drawCard(ctx, world);
+    else if (world.screen === 'draft') ED_drawDraft(ctx, world);
+    else if (world.screen === 'paused') ED_drawPaused(ctx, world);
+    else if (world.screen === 'over') ED_drawEnd(ctx, world, false);
+    else if (world.screen === 'win') ED_drawEnd(ctx, world, true);
+  }
+  ctx.restore();
+
+  // Red hurt flash over everything.
+  if (world.flashRed > 0) {
+    ctx.fillStyle = 'rgba(255,30,20,' + Math.min(0.28, world.flashRed * 0.5) + ')';
+    ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  }
 }

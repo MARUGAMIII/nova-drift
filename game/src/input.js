@@ -1,99 +1,50 @@
-// NOVA DRIFT — keyboard and mouse input.
-//
-// Tracks held keys, edge-triggered presses (wasPressed, cleared once a frame
-// by the main loop), and the mouse position in canvas CSS pixels. The canvas
-// is the only element listened to for the mouse, so clicks on a menu button
-// never leak into the page.
+// EMBERDEEP — keyboard and mouse input. One job: turn DOM events into a
+// plain state object the game loop reads (keys held, keys just pressed,
+// mouse position and buttons).
 
-export class Input {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.keys = new Set(); // codes currently held down.
-    this.pressed = new Set(); // codes pressed since the last endFrame().
-    this.mouse = { x: 0, y: 0, down: false, clicked: false };
-    this.onFirstGesture = null; // set by main: unlocks audio on first input.
-    this._gestured = false;
-  }
+const ED_Input = {
+  keys: {},
+  pressed: {},
+  mouse: { x: 640, y: 400, down: false, rightDown: false, clicked: false },
+  anyKey: false,
 
-  attach() {
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', this._onBlur);
-    this.canvas.addEventListener('mousemove', this._onMouseMove);
-    this.canvas.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-    this.canvas.addEventListener('contextmenu', this._onContextMenu);
-  }
+  init(canvas) {
+    window.addEventListener('keydown', (e) => {
+      if (!this.keys[e.code]) this.pressed[e.code] = true;
+      this.keys[e.code] = true;
+      this.anyKey = true;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+    });
+    window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
+    window.addEventListener('blur', () => { this.keys = {}; this.mouse.down = false; this.mouse.rightDown = false; });
+    canvas.addEventListener('mousemove', (e) => {
+      const r = canvas.getBoundingClientRect();
+      this.mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
+      this.mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
+    });
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 2) this.mouse.rightDown = true; else this.mouse.down = true;
+      if (e.button === 0) this.mouse.clicked = true;
+      this.anyKey = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2) this.mouse.rightDown = false; else this.mouse.down = false;
+    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  },
 
-  _gesture() {
-    if (this._gestured) return;
-    this._gestured = true;
-    if (this.onFirstGesture) this.onFirstGesture();
-  }
+  down(code) { return !!this.keys[code]; },
+  wasPressed(code) { return !!this.pressed[code]; },
+  axis() {
+    let x = 0, y = 0;
+    if (this.down('KeyA') || this.down('ArrowLeft')) x -= 1;
+    if (this.down('KeyD') || this.down('ArrowRight')) x += 1;
+    if (this.down('KeyW') || this.down('ArrowUp')) y -= 1;
+    if (this.down('KeyS') || this.down('ArrowDown')) y += 1;
+    return { x, y };
+  },
+  firing() { return this.mouse.down || this.down('Space'); },
+  dashPressed() { return this.wasPressed('ShiftLeft') || this.wasPressed('ShiftRight') || this.mouse.rightDown; },
 
-  _onKeyDown = (event) => {
-    this._gesture();
-    if (event.code === 'Space' || event.code.startsWith('Arrow')) {
-      event.preventDefault(); // keep the page from scrolling.
-    }
-    if (!event.repeat) this.pressed.add(event.code);
-    this.keys.add(event.code);
-  };
-
-  _onKeyUp = (event) => {
-    this.keys.delete(event.code);
-  };
-
-  _onBlur = () => {
-    this.keys.clear();
-    this.mouse.down = false;
-  };
-
-  _onMouseMove = (event) => {
-    const rect = this.canvas.getBoundingClientRect();
-    this.mouse.x = event.clientX - rect.left;
-    this.mouse.y = event.clientY - rect.top;
-  };
-
-  _onMouseDown = (event) => {
-    this._gesture();
-    if (event.button !== 0) return;
-    const rect = this.canvas.getBoundingClientRect();
-    this.mouse.x = event.clientX - rect.left;
-    this.mouse.y = event.clientY - rect.top;
-    this.mouse.down = true;
-    this.mouse.clicked = true;
-  };
-
-  _onMouseUp = () => {
-    this.mouse.down = false;
-  };
-
-  _onContextMenu = (event) => {
-    event.preventDefault();
-  };
-
-  isDown(code) {
-    return this.keys.has(code);
-  }
-
-  // True only on the frame the key went down.
-  wasPressed(code) {
-    return this.pressed.has(code);
-  }
-
-  // Any of the given codes held or just pressed.
-  anyDown(codes) {
-    return codes.some((code) => this.keys.has(code));
-  }
-
-  anyPressed(codes) {
-    return codes.some((code) => this.pressed.has(code));
-  }
-
-  // The main loop calls this at the end of every frame.
-  endFrame() {
-    this.pressed.clear();
-    this.mouse.clicked = false;
-  }
-}
+  endFrame() { this.pressed = {}; this.anyKey = false; this.mouse.clicked = false; },
+};

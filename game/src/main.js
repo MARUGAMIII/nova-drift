@@ -1,174 +1,150 @@
-// NOVA DRIFT — entry point: the loop, the screens and the wiring.
-//
-// Owns the canvas, the resize, the frame loop and the menu shortcuts; the
-// world module owns the rules and render.js owns the drawing. Sounds are
-// played here from the events updateWorld returns, so the simulation never
-// touches audio directly.
+// EMBERDEEP — entry point: canvas, frame loop, screens and shortcuts.
+// One job: own the loop and the wiring; the world module owns the rules,
+// render.js owns the drawing, and sounds play here from the events the
+// update returns.
 
-import { createWorld, startGame, togglePause, updateWorld, resizeWorld, pointInRect } from './world.js';
-import { renderWorld } from './render.js';
-import { Input } from './input.js';
-import { SoundBank } from './audio.js';
-import { applyShotMode } from './shots.js';
-import { hashSeed } from './random.js';
+const ED_canvas = document.getElementById('game');
+const ED_status = document.getElementById('status');
+const ED_ctx = ED_canvas.getContext('2d');
+const ED_params = new URLSearchParams(window.location.search);
 
-const canvas = document.getElementById('game');
-const statusEl = document.getElementById('status');
-const ctx = canvas.getContext('2d');
-const params = new URLSearchParams(window.location.search);
+const ED_seedParam = ED_params.get('seed');
+const ED_seed = ED_seedParam ? (Number(ED_seedParam) || 20261117) : (Date.now() % 2147483647);
 
-// A ?seed= value makes a run deterministic (used for screenshots); a normal
-// run seeds from the clock.
-const seedParam = params.get('seed');
-const seed = seedParam ? (Number(seedParam) || hashSeed(seedParam)) : (Date.now() % 2147483647);
+const ED_world = ED_newRun(ED_seed);
+ED_loadBest(ED_world);
+ED_Input.init(ED_canvas);
+ED_Input.mouse.x = 640;
+ED_Input.mouse.y = 300;
 
-const world = createWorld(window.innerWidth, window.innerHeight, seed);
-const input = new Input(canvas);
-const sound = new SoundBank();
-input.onFirstGesture = () => sound.ensure();
-input.attach();
-
-function resize() {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  canvas.width = Math.floor(w * dpr);
-  canvas.height = Math.floor(h * dpr);
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  resizeWorld(world, w, h);
-}
-
-window.addEventListener('resize', resize);
-resize();
-
-// The mouse starts aimed above the ship so the cannon has a sane direction
-// before the first mouse move.
-input.mouse.x = world.width / 2;
-input.mouse.y = world.height / 2 - 120;
-
-applyShotMode(world, params);
+ED_applyShot(ED_world, ED_params);
 
 // Testing hook: lets automated play-tests inspect and drive the world.
-// Harmless in normal play; the game never reads it.
-window.__nova = { world, startGame };
+window.__emberdeep = { world: ED_world, startRun: ED_startRun };
 
-let lastStatus = '';
+let ED_lastStatus = '';
 
-function updateStatus() {
-  const player = world.player;
+function ED_updateStatus() {
+  const w = ED_world;
   const parts = [
-    `NOVA DRIFT: ${world.phase}`,
-    `score ${world.score}`,
-    `wave ${Math.max(1, world.wave)}`,
-    `${player.lives} lives`,
+    'EMBERDEEP: ' + w.screen,
+    'score ' + w.score,
+    'floor ' + w.floor,
+    'wave ' + Math.max(1, w.wave),
+    w.player.hearts + ' hearts',
   ];
-  if (world.phase === 'title') parts.push('press Enter to launch');
-  if (world.phase === 'over') parts.push('press R to fly again');
+  if (w.screen === 'title') parts.push('press Enter to descend');
+  if (w.screen === 'over' || w.screen === 'win') parts.push('press R to delve again');
   const next = parts.join(', ');
-  if (next !== lastStatus) {
-    lastStatus = next;
-    statusEl.textContent = next;
+  if (next !== ED_lastStatus) {
+    ED_lastStatus = next;
+    ED_status.textContent = next;
   }
 }
 
-function playEvent(event) {
+function ED_playEvent(event) {
   switch (event.type) {
-    case 'shoot':
-      sound.shoot();
-      break;
-    case 'explosion':
-      sound.explosion(event.size);
-      break;
-    case 'pickup':
-      sound.pickup();
-      break;
-    case 'powerup':
-      sound.powerup();
-      break;
-    case 'hit':
-      sound.hit();
-      break;
-    case 'waveclear':
-      sound.waveClear();
-      break;
-    case 'gameover':
-      sound.gameOver();
-      break;
-    default:
-      break;
+    case 'shoot': ED_Sound.shoot(); break;
+    case 'spit': ED_Sound.blip(420, 200, 0.1, 'square', 0.08); break;
+    case 'die': ED_Sound.die(); break;
+    case 'pickup': ED_Sound.pickup(); break;
+    case 'heart': ED_Sound.heart(); break;
+    case 'dash': ED_Sound.dash(); break;
+    case 'hurt': ED_Sound.hurt(); break;
+    case 'shieldbreak': ED_Sound.blip(900, 300, 0.15, 'triangle', 0.2); break;
+    case 'relic': ED_Sound.relic(); break;
+    case 'floorclear': ED_Sound.floorClear(); break;
+    case 'waveclear': ED_Sound.blip(523, 784, 0.14, 'triangle', 0.18); break;
+    case 'boss': ED_Sound.boss(); break;
+    case 'slam': ED_Sound.noise(0.4, 500, 0.4); break;
+    case 'ring': ED_Sound.noise(0.35, 900, 0.45); break;
+    case 'enrage': ED_Sound.boss(); break;
+    case 'win': ED_Sound.win(); break;
+    case 'lose': ED_Sound.lose(); break;
+    default: break;
   }
 }
 
-function handleShortcuts() {
-  // Enter / Space launches from the title screen.
-  if (world.phase === 'title' && input.anyPressed(['Enter', 'Space'])) {
-    sound.ensure();
-    sound.click();
-    startGame(world);
+function ED_rectHit(x, y, r) {
+  return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function ED_handleShortcuts() {
+  const w = ED_world;
+  if (w.screen === 'title' && (ED_Input.wasPressed('Enter') || ED_Input.wasPressed('Space'))) {
+    ED_Sound.ensure();
+    ED_Sound.startDrone();
+    ED_Sound.click();
+    ED_startRun(w);
     return;
   }
-  // R flies again from the game-over screen or a pause.
-  if ((world.phase === 'over' || world.phase === 'paused') && input.wasPressed('KeyR')) {
-    sound.ensure();
-    sound.click();
-    startGame(world);
+  if ((w.screen === 'over' || w.screen === 'win') && ED_Input.wasPressed('KeyR')) {
+    ED_Sound.ensure();
+    ED_Sound.click();
+    ED_startRun(w);
     return;
   }
-  // P or Escape pauses and resumes.
-  if ((world.phase === 'playing' || world.phase === 'paused') && input.anyPressed(['KeyP', 'Escape'])) {
-    togglePause(world);
-    sound.click();
+  if (w.screen === 'draft') {
+    if (ED_Input.wasPressed('Digit1')) ED_pickRelic(w, 0);
+    else if (ED_Input.wasPressed('Digit2')) ED_pickRelic(w, 1);
+    else if (ED_Input.wasPressed('Digit3')) ED_pickRelic(w, 2);
   }
-  // M mutes and unmutes.
-  if (input.wasPressed('KeyM')) {
-    sound.ensure();
-    sound.toggleMute();
+  if ((w.screen === 'playing' || w.screen === 'paused') && (ED_Input.wasPressed('KeyP') || ED_Input.wasPressed('Escape'))) {
+    w.screen = w.screen === 'playing' ? 'paused' : 'playing';
+    ED_Sound.click();
+  }
+  if (ED_Input.wasPressed('KeyM')) {
+    ED_Sound.ensure();
+    ED_Sound.toggleMute();
   }
 }
 
-function handleClicks() {
-  if (!input.mouse.clicked) return;
-  const { x, y } = input.mouse;
-  if (world.phase === 'title') {
-    // Any click on the title launches the game.
-    sound.ensure();
-    sound.click();
-    startGame(world);
+function ED_handleClicks() {
+  const w = ED_world;
+  if (!ED_Input.mouse.clicked) return;
+  const x = ED_Input.mouse.x, y = ED_Input.mouse.y;
+  if (w.screen === 'title') {
+    ED_Sound.ensure();
+    ED_Sound.startDrone();
+    ED_Sound.click();
+    ED_startRun(w);
     return;
   }
-  if (world.phase === 'over' && pointInRect(x, y, world.ui.again)) {
-    sound.ensure();
-    sound.click();
-    startGame(world);
-    return;
+  if (w.screen === 'draft') {
+    for (let i = 0; i < w.draftRects.length; i++) {
+      if (ED_rectHit(x, y, w.draftRects[i])) {
+        ED_Sound.click();
+        ED_pickRelic(w, i);
+        return;
+      }
+    }
   }
-  if (world.phase === 'paused' && pointInRect(x, y, world.ui.resume)) {
-    sound.click();
-    togglePause(world);
+  if ((w.screen === 'over' || w.screen === 'win')) {
+    ED_Sound.ensure();
+    ED_Sound.click();
+    ED_startRun(w);
   }
 }
 
-let last = performance.now();
+let ED_last = performance.now();
 
-function frame(now) {
-  const dt = Math.min(1 / 30, Math.max(0, (now - last) / 1000));
-  last = now;
-  handleShortcuts();
-  handleClicks();
-  world.muted = sound.muted;
-  const events = updateWorld(world, input, dt);
-  for (const event of events) playEvent(event);
-  renderWorld(ctx, world);
-  updateStatus();
-  input.endFrame();
-  requestAnimationFrame(frame);
+function ED_frame(now) {
+  const dt = Math.min(1 / 30, Math.max(0, (now - ED_last) / 1000));
+  ED_last = now;
+  ED_handleShortcuts();
+  ED_handleClicks();
+  ED_world.muted = ED_Sound.muted;
+  const events = ED_updateWorld(ED_world, ED_Input, dt);
+  for (const event of events) ED_playEvent(event);
+  ED_draw(ED_ctx, ED_world);
+  ED_updateStatus();
+  ED_Input.endFrame();
+  requestAnimationFrame(ED_frame);
 }
 
-// Stepping away mid-run pauses the game instead of letting it kill you.
+// Stepping away mid-run pauses instead of letting the mountain kill you.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && world.phase === 'playing') togglePause(world);
+  if (document.hidden && ED_world.screen === 'playing') ED_world.screen = 'paused';
 });
 
-requestAnimationFrame(frame);
+requestAnimationFrame(ED_frame);
