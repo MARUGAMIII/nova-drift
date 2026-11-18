@@ -1,7 +1,8 @@
-// EMBERDEEP v3 — screenshot staging (?shot=start|play|boss|end&seed=N).
+// EMBERDEEP v4 — screenshot staging (?shot=start|play|boss|draft|end&seed=N).
 // One job: arrange one exact frame per shot so the shipped screenshots are
-// reproducible: title with difficulty cards, a busy mid-combat frame, the
-// Obsidian Warden boss fight, and an Endless victory screen.
+// reproducible: title with difficulty cards and the Ember Workshop, a busy
+// mid-combat frame, the Obsidian Warden boss fight, and a relic draft
+// between floors.
 
 function ED_scriptedInput(aimX, aimY) {
   return {
@@ -56,6 +57,8 @@ function ED_stagePlay(world) {
   ED_burst(world, 900, 260, 12, '#ff7a3c', 180);
   ED_burst(world, 1050, 300, 8, '#ff4d6a', 140);
   ED_burst(world, 760, 330, 10, '#ffe14a', 180);
+  ED_burst(world, 700, 240, 16, '#ffd94a', 200);
+  ED_burst(world, 320, 660, 8, '#c98cff', 160);
   // Let the frame settle: a short burst of play with the cannon firing,
   // short enough that the staged foes have not closed on the warden yet.
   const input = ED_scriptedInput(900, 300);
@@ -99,6 +102,29 @@ function ED_stageBoss(world) {
   world.screen = 'playing';
 }
 
+function ED_stageDraft(world) {
+  ED_startRun(world);
+  world.screen = 'playing';
+  world.floor = 2;
+  ED_startFloor(world);
+  const p = world.player;
+  p.relics = { fury: 2, orbit: 1, split: 1, magnet: 1 };
+  p.damageMul = 1.56;
+  p.orbits = 1;
+  p.bolts = 2;
+  p.pickupMul = 1.6;
+  world.score = 2840;
+  world.shards = 87;
+  world.kills = 96;
+  // Offer three relics, one of them new in v4.
+  world.draft = [
+    ED_RELICS.find((r) => r.id === 'swift'),
+    ED_RELICS.find((r) => r.id === 'chain'),
+    ED_RELICS.find((r) => r.id === 'plate'),
+  ];
+  world.screen = 'draft';
+}
+
 function ED_stageEnd(world) {
   world.difficulty = 'endless';
   ED_startRun(world);
@@ -123,6 +149,7 @@ function ED_applyShot(world, params) {
   }
   if (shot === 'play') { ED_stagePlay(world); return true; }
   if (shot === 'boss') { ED_stageBoss(world); return true; }
+  if (shot === 'draft') { ED_stageDraft(world); return true; }
   if (shot === 'end') { ED_stageEnd(world); return true; }
   return false;
 }

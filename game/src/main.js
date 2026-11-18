@@ -87,6 +87,19 @@ function ED_handleShortcuts() {
     if (ED_Input.wasPressed('Digit1') || ED_Input.wasPressed('Numpad1')) { ED_beginRun('normal'); return; }
     if (ED_Input.wasPressed('Digit2') || ED_Input.wasPressed('Numpad2')) { ED_beginRun('hard'); return; }
     if (ED_Input.wasPressed('Digit3') || ED_Input.wasPressed('Numpad3')) { ED_beginRun('endless'); return; }
+    // Ember Workshop: 4 / 5 / 6 buy a permanent upgrade with banked shards.
+    if (ED_Input.wasPressed('Digit4') || ED_Input.wasPressed('Numpad4')) {
+      if (ED_buyWorkshop(w, 0)) { ED_Sound.ensure(); ED_Sound.relic(); }
+      return;
+    }
+    if (ED_Input.wasPressed('Digit5') || ED_Input.wasPressed('Numpad5')) {
+      if (ED_buyWorkshop(w, 1)) { ED_Sound.ensure(); ED_Sound.relic(); }
+      return;
+    }
+    if (ED_Input.wasPressed('Digit6') || ED_Input.wasPressed('Numpad6')) {
+      if (ED_buyWorkshop(w, 2)) { ED_Sound.ensure(); ED_Sound.relic(); }
+      return;
+    }
     if (ED_Input.wasPressed('Enter') || ED_Input.wasPressed('Space')) { ED_beginRun('normal'); return; }
   }
   if ((w.screen === 'over' || w.screen === 'win') && ED_Input.wasPressed('KeyR')) {
@@ -118,6 +131,12 @@ function ED_handleClicks() {
     for (const rect of w.titleRects) {
       if (ED_rectHit(x, y, rect)) {
         ED_beginRun(rect.diff);
+        return;
+      }
+    }
+    for (const rect of w.workshopRects) {
+      if (ED_rectHit(x, y, rect)) {
+        if (ED_buyWorkshop(w, rect.shop)) { ED_Sound.ensure(); ED_Sound.relic(); }
         return;
       }
     }

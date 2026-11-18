@@ -19,7 +19,7 @@ function ED_newPlayer() {
     // Relic-driven stats (multipliers start at 1).
     damageMul: 1, fireMul: 1, bolts: 1, pierce: 0, orbits: 0, chain: 0,
     dashCdMul: 1, leech: 0, pickupMul: 1, crit: 0, ward: false, thorns: 0,
-    aura: 0, nova: 0, regen: 0, greed: 0,
+    aura: 0, nova: 0, regen: 0, greed: 0, armor: 0, shardBonus: 0,
     relics: {},
     orbitAngle: 0,
     walkPhase: 0,

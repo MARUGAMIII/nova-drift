@@ -1,6 +1,8 @@
-// EMBERDEEP v3 — the run: floors, waves, collisions, pickups, particles,
+// EMBERDEEP v4 — the run: floors, waves, collisions, pickups, particles,
 // the descent gate, and the Endless depths. One job: the simulation and
-// its rules.
+// its rules. v4 adds per-floor background set-pieces, the Molten Plate
+// block chance, the Shard Siphon score bonus, and the Ember Workshop —
+// banked shards and permanent upgrades that persist between runs.
 
 function ED_newRun(seed) {
   const rng = ED_Rng(seed);
@@ -43,7 +45,67 @@ function ED_newRun(seed) {
     events: [],
     decor: [],
     muted: false,
+    // Ember Workshop: banked shards + permanent upgrade levels, loaded
+    // from localStorage once per page load.
+    bank: ED_loadBank(),
+    workshop: ED_loadWorkshop(),
+    workshopRects: [],
   };
+}
+
+function ED_loadBank() {
+  try { return Number(window.localStorage.getItem('emberdeep-bank') || 0) || 0; }
+  catch (e) { return 0; }
+}
+
+function ED_saveBank(world) {
+  try { window.localStorage.setItem('emberdeep-bank', String(world.bank)); } catch (e) {}
+}
+
+function ED_loadWorkshop() {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem('emberdeep-workshop') || '{}');
+    const out = {};
+    for (const item of ED_WORKSHOP) out[item.id] = Math.min(item.max, Math.max(0, Number(raw[item.id]) || 0));
+    return out;
+  } catch (e) {
+    const out = {};
+    for (const item of ED_WORKSHOP) out[item.id] = 0;
+    return out;
+  }
+}
+
+function ED_saveWorkshop(world) {
+  try { window.localStorage.setItem('emberdeep-workshop', JSON.stringify(world.workshop)); } catch (e) {}
+}
+
+// Buy one workshop level with banked shards. Returns true on success.
+function ED_buyWorkshop(world, index) {
+  const item = ED_WORKSHOP[index];
+  if (!item) return false;
+  const lvl = world.workshop[item.id] || 0;
+  if (lvl >= item.max) return false;
+  const cost = item.costs[lvl];
+  if (world.bank < cost) return false;
+  world.bank -= cost;
+  world.workshop[item.id] = lvl + 1;
+  ED_saveBank(world);
+  ED_saveWorkshop(world);
+  return true;
+}
+
+// Apply the owned permanent upgrades to a fresh player.
+function ED_applyWorkshop(world, player) {
+  for (const item of ED_WORKSHOP) {
+    const lvl = world.workshop[item.id] || 0;
+    for (let i = 0; i < lvl; i++) item.apply(player, lvl);
+  }
+}
+
+// Bank this run's shards when the run ends.
+function ED_bankRun(world) {
+  world.bank += world.shards;
+  ED_saveBank(world);
 }
 
 function ED_loadBest(world) {
@@ -80,7 +142,9 @@ function ED_floorLabel(world) {
   return 'Endless Depth ' + (world.floor - ED_FLOORS.length);
 }
 
-// Scatter floor decoration (rocks and crystal shards) for this floor.
+// Scatter floor decoration (rocks and crystal shards) for this floor,
+// plus the floor's set-piece: ash dunes, ember veins, crystal clusters,
+// obsidian shards or lava pools — one per realm feature.
 function ED_makeDecor(world) {
   const a = ED_CONFIG.arena;
   const rng = world.rng;
@@ -92,6 +156,20 @@ function ED_makeDecor(world) {
       r: rng.range(4, 16),
       crystal: rng.next() < 0.35,
       rot: rng.range(0, 6.28),
+    });
+  }
+  const feature = ED_floorDef(world).feature;
+  const spots = [
+    [0.22, 0.3], [0.78, 0.25], [0.5, 0.62], [0.15, 0.72], [0.85, 0.68], [0.62, 0.22],
+  ];
+  for (const [fx, fy] of spots) {
+    world.decor.push({
+      x: a.x + a.w * fx + rng.range(-30, 30),
+      y: a.y + a.h * fy + rng.range(-24, 24),
+      r: rng.range(22, 42),
+      kind: feature,
+      rot: rng.range(0, 6.28),
+      seed: rng.next() * 100,
     });
   }
 }
@@ -109,8 +187,11 @@ function ED_startRun(world) {
   world.runTime = 0;
   world.newBest = false;
   world.player = ED_newPlayer();
-  world.player.hearts = diff.hearts;
-  world.player.maxHearts = diff.hearts;
+  const vessel = world.workshop.heart || 0;
+  ED_applyWorkshop(world, world.player);
+  // Difficulty sets the base hearts; workshop Heart Vessels add on top.
+  world.player.maxHearts = diff.hearts + vessel;
+  world.player.hearts = diff.hearts + vessel;
   world.enemies = [];
   world.bullets = [];
   world.ebullets = [];
@@ -259,6 +340,13 @@ function ED_killEnemy(world, e) {
 function ED_hurtPlayer(world, dmg) {
   const p = world.player;
   if (p.invuln > 0 || p.dashTimer > 0) return;
+  // Molten Plate: a flat chance to shrug a hit off entirely.
+  if (p.armor > 0 && world.rng.next() < p.armor) {
+    p.invuln = 0.5;
+    world.events.push({ type: 'shieldbreak' });
+    ED_addText(world, p.x, p.y - 24, 'BLOCKED', '#59d8ff');
+    return;
+  }
   if (p.shield) {
     p.shield = false;
     p.invuln = 1.0;
@@ -275,6 +363,7 @@ function ED_hurtPlayer(world, dmg) {
   if (p.hearts <= 0) {
     p.hearts = 0;
     world.screen = 'over';
+    ED_bankRun(world);
     if (world.score > world.best) {
       world.best = world.score;
       world.newBest = true;
@@ -321,6 +410,7 @@ function ED_pickRelic(world, index) {
 
 function ED_winRun(world) {
   world.screen = 'win';
+  ED_bankRun(world);
   const timeBonus = Math.max(0, 1200 - Math.floor(world.runTime) * 2);
   world.score += ED_CONFIG.victoryBonus + timeBonus;
   if (world.score > world.best) {
@@ -452,7 +542,7 @@ function ED_updatePlaying(world, input, dt) {
       pk.life = 0;
       if (pk.kind === 'shard') {
         world.shards += 1;
-        world.score += 5;
+        world.score += 5 + (p.shardBonus || 0);
         world.events.push({ type: 'pickup' });
       } else if (pk.kind === 'heart') {
         p.hearts = Math.min(p.maxHearts, p.hearts + 1);

@@ -1,7 +1,99 @@
-// EMBERDEEP v3 — all drawing: the arena, the creatures, the particles, the
+// EMBERDEEP v4 — all drawing: the arena, the creatures, the particles, the
 // HUD and every screen. One job: turn the world state into a picture.
-// v3 adds the difficulty cards on the title screen, the bomber and the
-// Obsidian Warden, elite gold rings, and Endless depth labels.
+// v4 adds the three-realm look: per-floor set-pieces (ash dunes, ember
+// veins, crystal clusters, obsidian shards, lava pools), a stone-tile
+// grid, dark halos so every creature reads at a glance, a warm light
+// around the warden with a vignette, realm banners, and the Ember
+// Workshop row on the title screen.
+
+function ED_drawFeature(ctx, world, d) {
+  const c = ED_floorDef(world);
+  const pulse = 0.75 + Math.sin(world.time * 2 + d.seed) * 0.25;
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  if (d.kind === 'ash') {
+    // Low ash dunes: soft layered arcs.
+    ctx.fillStyle = c.wall;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, d.r, d.r * 0.42, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = c.floor;
+    ctx.beginPath();
+    ctx.ellipse(0, 6, d.r * 0.7, d.r * 0.3, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+  } else if (d.kind === 'veins') {
+    // A glowing ember vein: a jagged crack with a hot core.
+    ctx.rotate(d.rot);
+    ctx.strokeStyle = c.dark || c.wall;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(-d.r, 0);
+    ctx.lineTo(-d.r * 0.3, -8);
+    ctx.lineTo(d.r * 0.3, 7);
+    ctx.lineTo(d.r, -2);
+    ctx.stroke();
+    ctx.strokeStyle = c.glow;
+    ctx.globalAlpha = pulse;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-d.r, 0);
+    ctx.lineTo(-d.r * 0.3, -8);
+    ctx.lineTo(d.r * 0.3, 7);
+    ctx.lineTo(d.r, -2);
+    ctx.stroke();
+  } else if (d.kind === 'crystals') {
+    // A cluster of tall violet crystals.
+    ctx.shadowColor = c.glow;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = c.glow;
+    ctx.globalAlpha = 0.85;
+    for (let i = -1; i <= 1; i++) {
+      const h = d.r * (i === 0 ? 1.15 : 0.8);
+      ctx.beginPath();
+      ctx.moveTo(i * d.r * 0.45 - 7, 8);
+      ctx.lineTo(i * d.r * 0.45, -h);
+      ctx.lineTo(i * d.r * 0.45 + 7, 8);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  } else if (d.kind === 'shards') {
+    // Black-glass obsidian shards with cold blue edges.
+    ctx.fillStyle = '#05070d';
+    ctx.strokeStyle = c.glow;
+    ctx.lineWidth = 1.5;
+    for (let i = -1; i <= 1; i++) {
+      const h = d.r * (i === 0 ? 1.2 : 0.75);
+      ctx.beginPath();
+      ctx.moveTo(i * d.r * 0.5 - 8, 10);
+      ctx.lineTo(i * d.r * 0.5, -h);
+      ctx.lineTo(i * d.r * 0.5 + 8, 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (d.kind === 'lava') {
+    // A bubbling lava pool.
+    ctx.fillStyle = '#ff5a2e';
+    ctx.globalAlpha = 0.9 * pulse + 0.1;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, d.r, d.r * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd94a';
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, d.r * 0.55, d.r * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ff2e1e';
+    ctx.beginPath();
+    ctx.arc(-d.r * 0.3, -2, 4 + Math.sin(world.time * 5 + d.seed) * 1.5, 0, Math.PI * 2);
+    ctx.arc(d.r * 0.35, 3, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
 
 function ED_drawBackground(ctx, world) {
   const c = ED_floorDef(world);
@@ -16,12 +108,34 @@ function ED_drawBackground(ctx, world) {
   ctx.fillStyle = g;
   ctx.fillRect(a.x, a.y, a.w, a.h);
 
+  // Stone-tile grid, faint enough to read as texture, not noise.
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = a.x + 64; x < a.x + a.w; x += 64) {
+    ctx.moveTo(x, a.y);
+    ctx.lineTo(x, a.y + a.h);
+  }
+  for (let y = a.y + 64; y < a.y + a.h; y += 64) {
+    ctx.moveTo(a.x, y);
+    ctx.lineTo(a.x + a.w, y);
+  }
+  ctx.stroke();
+
+  // The floor's set-pieces first, under the loose rocks and crystals.
+  for (const d of world.decor) {
+    if (d.kind) ED_drawFeature(ctx, world, d);
+  }
+
   // Decor: rocks and glowing crystals.
   for (const d of world.decor) {
+    if (d.kind) continue;
     ctx.save();
     ctx.translate(d.x, d.y);
     ctx.rotate(d.rot);
     if (d.crystal) {
+      ctx.shadowColor = c.glow;
+      ctx.shadowBlur = 10;
       ctx.fillStyle = c.glow;
       ctx.globalAlpha = 0.55;
       ctx.beginPath();
@@ -31,6 +145,7 @@ function ED_drawBackground(ctx, world) {
       ctx.lineTo(-d.r * 0.6, 0);
       ctx.closePath();
       ctx.fill();
+      ctx.shadowBlur = 0;
     } else {
       ctx.fillStyle = c.wall;
       ctx.beginPath();
@@ -114,6 +229,11 @@ function ED_drawEnemy(ctx, world, e) {
   const c = ED_floorDef(world);
   ctx.save();
   ctx.translate(e.x, e.y);
+  // Dark halo so every creature reads against any floor.
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath();
+  ctx.arc(0, 0, e.radius + 3, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = e.flash > 0 ? '#ffffff' : e.color;
   const wob = Math.sin(e.t * 6) * 0.08;
   ctx.rotate(wob);
@@ -458,6 +578,10 @@ function ED_drawHud(ctx, world) {
   ctx.fillStyle = c.accent;
   const waveLabel = world.boss ? 'BOSS' : (world.waveState === 'done' ? 'FLOOR CLEAR' : 'Wave ' + Math.max(1, world.wave) + ' / ' + ED_CONFIG.wavesPerFloor);
   ctx.fillText(waveLabel, 56 + nameW + 24, 84);
+  // Realm tag, small, under the floor name.
+  ctx.fillStyle = ED_REALMS[ED_floorDef(world).realm].accent;
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText(ED_REALMS[ED_floorDef(world).realm].name.toUpperCase(), 56, 100);
 
   // Difficulty tag under the hearts.
   ctx.fillStyle = '#9fb8d8';
@@ -566,7 +690,7 @@ function ED_drawTitle(ctx, world) {
   ctx.fillText('Delve of the Living Mountain', 640, 220);
   ctx.fillStyle = '#e07830';
   ctx.font = '17px sans-serif';
-  ctx.fillText('Five floors. Three bosses. Seventeen relics. Endless below.', 640, 252);
+  ctx.fillText('3 realms · 5 floors · 3 bosses · 20 relics · Ember Workshop · Endless below.', 640, 252);
 
   // Difficulty cards: click one, or press 1 / 2 / 3.
   const cards = [
@@ -608,23 +732,57 @@ function ED_drawTitle(ctx, world) {
   ];
   lines.forEach((line, i) => ctx.fillText(line, 640, 500 + i * 28));
 
+  // Ember Workshop: banked shards buy permanent upgrades between runs.
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 17px sans-serif';
+  ctx.fillText('EMBER WORKSHOP  —  ◆ banked shards: ' + world.bank, 640, 614);
+  const wch = 72;
+  const wy = 624;
+  world.workshopRects = [];
+  ED_WORKSHOP.forEach((item, i) => {
+    const x = x0 + i * (cw + gap);
+    world.workshopRects.push({ x, y: wy, w: cw, h: wch, shop: i });
+    const lvl = world.workshop[item.id] || 0;
+    const maxed = lvl >= item.max;
+    const cost = maxed ? 0 : item.costs[lvl];
+    const afford = !maxed && world.bank >= cost;
+    ctx.fillStyle = '#1d140e';
+    ctx.fillRect(x, wy, cw, wch);
+    ctx.strokeStyle = afford ? '#ffd94a' : (maxed ? '#59d8ff' : '#5a4632');
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, wy, cw, wch);
+    ctx.fillStyle = '#ffd94a';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(item.name, x + cw / 2, wy + 24);
+    ctx.fillStyle = '#f5d9b0';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(item.desc + '  ·  Lv ' + lvl + '/' + item.max, x + cw / 2, wy + 44);
+    ctx.fillStyle = maxed ? '#59d8ff' : (afford ? '#ffd94a' : '#9fb8d8');
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(maxed ? 'MAXED' : 'Press ' + (i + 4) + ' — ' + cost + ' ◆', x + cw / 2, wy + 62);
+  });
+
   ctx.fillStyle = '#ffd94a';
   ctx.font = 'bold 22px sans-serif';
-  if (Math.sin(world.time * 3) > -0.2) ctx.fillText('— pick a way down —', 640, 650);
+  if (Math.sin(world.time * 3) > -0.2) ctx.fillText('— pick a way down —', 640, 732);
   if (world.best > 0) {
     ctx.fillStyle = '#9fb8d8';
     ctx.font = '16px sans-serif';
-    ctx.fillText('Best score: ' + world.best, 640, 690);
+    ctx.fillText('Best score: ' + world.best, 640, 764);
   }
   ctx.textAlign = 'left';
 }
 
 function ED_drawCard(ctx, world) {
   const c = ED_floorDef(world);
+  const realm = ED_REALMS[c.realm];
   const bossType = ED_bossForFloor(world, world.floor);
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
   ctx.textAlign = 'center';
+  ctx.fillStyle = realm.accent;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText(realm.tag.toUpperCase(), 640, 300);
   ctx.fillStyle = c.glow;
   ctx.font = 'bold 64px sans-serif';
   ctx.fillText(ED_floorLabel(world).toUpperCase(), 640, 380);
@@ -803,6 +961,22 @@ function ED_draw(ctx, world) {
     else if (world.screen === 'win') ED_drawEnd(ctx, world, true);
   }
   ctx.restore();
+
+  // Warm light around the warden, then a vignette that darkens the edges
+  // of the arena — the eye lands on the player, never on the border.
+  if (world.screen !== 'title') {
+    const p = world.player;
+    const lg = ctx.createRadialGradient(p.x, p.y, 60, p.x, p.y, 340);
+    lg.addColorStop(0, 'rgba(255,179,92,0.10)');
+    lg.addColorStop(1, 'rgba(255,179,92,0)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+    const vg = ctx.createRadialGradient(640, 400, 300, 640, 400, 760);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.34)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, ED_CONFIG.width, ED_CONFIG.height);
+  }
 
   // White flash on floor transitions.
   if (world.flashWhite > 0) {

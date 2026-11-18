@@ -1,7 +1,17 @@
-// EMBERDEEP v3 — every number that tunes the game lives in this file.
+// EMBERDEEP v4 — every number that tunes the game lives in this file.
 // Floors, palettes, enemy stats, difficulties and the relic pool.
-// v3 adds: three difficulties (Normal / Hard / Endless), a third boss on
-// floor 4, elites, a bomber enemy, and three new relics.
+// v4 adds: three realms grouping the five floors (Ashen Wastes / Crystal
+// Deep / Obsidian & Magma), three new relics (20 total), a floor-1
+// softening so the opening is welcoming, and the Ember Workshop meta
+// upgrades (see ED_WORKSHOP below).
+
+// The three realms. Each floor belongs to one realm; the realm sets the
+// mood of the floor card, the HUD label and the background feature.
+const ED_REALMS = [
+  { name: 'Ashen Wastes', tag: 'REALM I — where the mountain breathes', accent: '#e07830' },
+  { name: 'Crystal Deep', tag: 'REALM II — the halls remember fire', accent: '#8a5cf0' },
+  { name: 'Obsidian & Magma', tag: 'REALM III — the warden watches, the heart burns', accent: '#ff2e1e' },
+];
 
 const ED_CONFIG = {
   width: 1280,
@@ -51,21 +61,26 @@ const ED_DIFFICULTIES = {
 };
 
 // One floor's look and its enemy mix. Deeper floors run hotter and darker.
+// feature: the background set-piece this floor draws (ash dunes, ember
+// veins, crystal clusters, obsidian shards, lava pools).
 const ED_FLOORS = [
   {
     name: 'Ash Caverns', sub: 'Floor 1 — the mountain breathes',
+    realm: 0, feature: 'ash',
     bg: '#191411', wall: '#2e211a', floor: '#241a14', accent: '#e07830',
     glow: '#ff9a3c', ember: '#ffb35c', text: '#f5d9b0',
-    mix: ['mite', 'mite', 'mite', 'spitter'],
+    mix: ['mite', 'mite', 'mite', 'mite'],
   },
   {
     name: 'Ember Halls', sub: 'Floor 2 — the halls remember fire',
+    realm: 0, feature: 'veins',
     bg: '#220e08', wall: '#421a0e', floor: '#2e120a', accent: '#ff4a2e',
     glow: '#ff7a3c', ember: '#ff9a4c', text: '#ffe0b8',
     mix: ['mite', 'spitter', 'spitter', 'splitter', 'wisp', 'bomber'],
   },
   {
     name: 'Crystal Deep', sub: 'Floor 3 — the colossus wakes',
+    realm: 1, feature: 'crystals',
     bg: '#120e1e', wall: '#2a1e44', floor: '#1c142e', accent: '#8a5cf0',
     glow: '#b78cff', ember: '#d0a5ff', text: '#e6dcff',
     mix: ['spitter', 'splitter', 'wisp', 'wisp', 'golem', 'bomber'],
@@ -73,6 +88,7 @@ const ED_FLOORS = [
   },
   {
     name: 'Obsidian Vault', sub: 'Floor 4 — the warden watches',
+    realm: 2, feature: 'shards',
     bg: '#0a0d18', wall: '#1c2438', floor: '#11182a', accent: '#4ac8ff',
     glow: '#6ad8ff', ember: '#a8e4ff', text: '#dceeff',
     mix: ['splitter', 'wisp', 'wisp', 'golem', 'spitter', 'bomber'],
@@ -80,11 +96,23 @@ const ED_FLOORS = [
   },
   {
     name: 'The Magma Heart', sub: 'Floor 5 — kill the heart, end the mountain',
+    realm: 2, feature: 'lava',
     bg: '#200b06', wall: '#471409', floor: '#2e0d05', accent: '#ff2e1e',
     glow: '#ff5a2e', ember: '#ffc23c', text: '#ffe9c4',
     mix: ['wisp', 'golem', 'spitter', 'splitter', 'bomber'],
     boss: 'heart',
   },
+];
+
+// The Ember Workshop: permanent upgrades bought with banked shards between
+// runs. Levels persist in localStorage; costs rise per level.
+const ED_WORKSHOP = [
+  { id: 'heart', name: 'Heart Vessel', max: 3, costs: [150, 250, 400],
+    desc: '+1 max heart, forever', apply: (p, lvl) => { p.maxHearts += 1; p.hearts += 1; } },
+  { id: 'temper', name: 'Ember Temper', max: 5, costs: [120, 200, 300, 450, 600],
+    desc: '+10% bolt damage, forever', apply: (p) => { p.damageMul *= 1.10; } },
+  { id: 'boots', name: 'Swift Boots', max: 3, costs: [100, 180, 300],
+    desc: '+6% move speed, forever', apply: (p) => { p.speed *= 1.06; } },
 ];
 
 // Enemy types. hp and speed scale with the absolute floor number.
@@ -106,9 +134,9 @@ const ED_ENEMY_SCALE = { hpPerFloor: 0.38, speedPerFloor: 0.06 };
 const ED_ENDLESS_BOSSES = ['warden', 'colossus', 'heart'];
 
 // How many enemies a wave spawns (before the boss wave). The first floor
-// runs one lighter per wave so the opening stays welcoming.
+// runs lighter per wave so the opening stays welcoming.
 function ED_WAVE_SIZE(floor, wave) {
-  return 3 + floor * 2 + wave * 2 - (floor === 1 ? 1 : 0);
+  return 3 + floor * 2 + wave * 2 - (floor === 1 ? 2 : 0);
 }
 
 // The relic draft pool. apply() runs once per level gained.
@@ -130,4 +158,7 @@ const ED_RELICS = [
   { id: 'nova',   name: 'Ember Nova',    max: 2, desc: 'Dash ends in a damaging nova', apply: (p) => { p.nova += 1; } },
   { id: 'regen',  name: 'Cinder Heart',  max: 2, desc: 'Regrow 1 heart every 40s',  apply: (p) => { p.regen += 1; } },
   { id: 'greed',  name: 'Shard Greed',   max: 3, desc: 'Kills drop +1 shard',       apply: (p) => { p.greed += 1; } },
+  { id: 'swift',  name: 'Ember Boots',   max: 3, desc: '+12% move speed',          apply: (p) => { p.speed *= 1.12; } },
+  { id: 'plate',  name: 'Molten Plate',  max: 3, desc: '15% chance to block a hit', apply: (p) => { p.armor += 0.15; } },
+  { id: 'siphon', name: 'Shard Siphon',  max: 3, desc: '+5 score per shard picked', apply: (p) => { p.shardBonus += 5; } },
 ];
