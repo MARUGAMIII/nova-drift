@@ -1,4 +1,7 @@
-// EMBERDEEP v3 — the entrypoint for make.fun's best-game-01 (Node 22+, stdlib only).
+// EMBERDEEP v4 — the entrypoint for make.fun's best-game-01 (Node 22+, stdlib only).
+// v4: three realms, 20 relics, the Ember Workshop (permanent upgrades bought
+// with banked shards), per-floor set-pieces and a reworked title screen.
+// Screenshots: title / busy combat / Warden boss fight / relic draft.
 //
 // What it does, in order:
 //   1. Refuses to hand in a broken entry (game/index.html must exist, and the
@@ -66,6 +69,8 @@ function checkGameFiles(dir) {
 function checkShotList(repoRoot, shotsDir) {
   // shots.json is the record of how each screenshot was staged: every file
   // it names must actually be shipped, so a stale entry cannot slip in.
+  // v4 ships exactly four shots: 1-start (title + Workshop), 2-play (busy
+  // combat), 3-boss (the Obsidian Warden), 4-draft (relic draft).
   const listPath = join(repoRoot, 'shots.json');
   if (!existsSync(listPath)) return;
   const wanted = JSON.parse(readFileSync(listPath, 'utf8'));
@@ -78,13 +83,18 @@ function checkShotList(repoRoot, shotsDir) {
 
 function checkScreenshots(dir) {
   // The gate refuses a screenshot over 256 KiB or one that is not a whole
-  // PNG or JPEG: catch that here, before anything is handed in.
+  // PNG or JPEG: catch that here, before anything is handed in. A shot
+  // under 8 KiB is almost certainly a blank or failed render, so refuse
+  // that too — a black rectangle would cost the whole entry.
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const info = statSync(path);
     if (!info.isFile()) continue;
     if (info.size > 262144) {
       throw new Error(`EMBERDEEP: screenshots/${name} is ${info.size} bytes, over the 256 KiB cap`);
+    }
+    if (info.size < 8192) {
+      throw new Error(`EMBERDEEP: screenshots/${name} is only ${info.size} bytes, probably a blank render`);
     }
     const head = readFileSync(path).subarray(0, 4);
     const isJpeg = head[0] === 0xff && head[1] === 0xd8;
